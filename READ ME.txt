@@ -1,0 +1,23 @@
+Back on the Block
+
+Open the design document in design/Game Design.html. It records the complete game direction in plain paragraphs.
+
+To play locally, run python3 run_game.py from this folder and open http://127.0.0.1:8771 in a browser. The source is a browser-native JavaScript game. It does not need Godot, npm packages, accounts, or external services.
+
+WASD or arrows move. Shift runs. E interacts with nearby people, doors, vehicles, events, and furniture. In a car, W/S accelerate or reverse, A/D steer, and Space brakes. F equips or puts away a pistol. Click or J attacks. R reloads. H uses a first aid kit. M opens the map, N shows people, I opens your bag, and L opens your notes. Escape pauses. Conversations and menus pause the local world.
+
+Speak to Nikhil outside home, or explore. Every building has an interior. The map can pin useful places. Ordinary jobs are available at the office, cafe, shop, garage, and dispatch depot. Shops and the clinic sell supplies. You have a runabout parked near home.
+
+Progress saves to this browser. Export a save from Pause if you want a separate copy. Importing it restores your town and its people. Moving to another browser or hosting address uses a separate save. Keep your save file if you move from local play to itch.io.
+
+The initial delivery story has three resolutions. You can investigate the consignment and submit evidence, clear your arrears through ordinary work, or accept the criminal arrangement. You can carry on playing after a resolution. Events, personal memories, injuries, purchases, and commitments persist.
+
+The first build contains a finite generated district, 24 residents, 12 vehicles, several types of useful interiors, simulated daily routines, personal trust, companions, contextual disclosures, witnessed crime, police pursuit and investigation, work, supplies, recovery, and local incidents. It is a compact playable foundation for the larger life simulation in the design. Multiplayer, deep business ownership, and long relationship scenes are future extensions.
+
+Music is waiting for your tracks. Pause > Settings lets you preview an audio file from your own device. This preview stays local and needs to be selected again after a reload. No sound or image generation tools were used for this build. The world is rendered procedurally, with the supplied character and vehicle sprite artwork.
+
+Sprite source: PostApocalypse Asset Pack by TheLazyStone, supplied with this project. See assets/LICENSE.txt for its noncommercial use terms and commercial payment requirement. Backgrounds and interfaces are drawn in code. Code and design development used OpenAI Codex assistance.
+
+For itch.io, upload builds/Back-on-the-Block-web.zip as an HTML Game. Its index.html is at the ZIP root. Mark the upload as playable in the browser. Use an approximately 1280 by 720 embed, enable fullscreen, and test a draft before publishing. Desktop keyboard and mouse are the tested primary controls.
+
+Run node --test tests/*.test.js for the simulation and generation checks. Rebuild the browser ZIP with python3 tools/package_game.py after changing files.

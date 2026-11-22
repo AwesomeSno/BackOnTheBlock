@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#273b38"><meta name="description" content="A small city with a long memory. A seeded open-world crime sandbox about second chances.">
+<title>Back on the Block</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="game-shell">
+  <canvas id="world" aria-label="The town. Move with WASD or arrow keys. Press E near a person, door, or vehicle to interact."></canvas>
+  <div class="paper-grain" aria-hidden="true"></div>
+  <header id="hud" hidden>
+    <div class="where"><span class="eyebrow" id="location">Old Market</span><strong id="clock">MON 08:00</strong></div>
+    <div class="vitals"><div><span>HEALTH</span><strong id="health-text">100</strong></div><progress id="health" max="100" value="100" aria-label="Health"></progress><span id="vehicle-status"></span></div>
+    <div class="cash"><span class="eyebrow">IN YOUR POCKET</span><strong id="money">₹180</strong></div>
+    <button id="pause-button" class="square" aria-label="Pause game">Ⅱ</button>
+  </header>
+  <div id="legal" hidden><label>INVESTIGATION <span id="case-status">No active case</span></label><progress id="investigation" value="0" max="100"></progress><label>IMMEDIATE DANGER <span id="pursuit-status">Clear</span></label><progress id="pursuit" value="0" max="100"></progress></div>
+  <button id="minimap-button" hidden aria-label="Open town map"><canvas id="minimap" width="180" height="180"></canvas><span>THE NEIGHBOURHOOD <kbd>M</kbd></span></button>
+  <aside id="objective" hidden><span class="eyebrow" id="chapter">GETTING SETTLED</span><p id="objective-text"></p><span id="waypoint-text"></span></aside>
+  <div id="prompt" hidden><kbd>E</kbd><span id="prompt-text">Interact</span></div>
+  <nav id="toolbar" hidden aria-label="Game controls"><button data-panel="bag">Bag <kbd>I</kbd></button><button data-panel="people">People <kbd>N</kbd></button><button data-panel="journal">Notebook <kbd>L</kbd></button><button id="save-button">Save</button></nav>
+  <div id="control-hints" hidden><span><kbd>WASD</kbd> move</span><span><kbd>SHIFT</kbd> run</span><span><kbd>E</kbd> interact</span><span><kbd>F</kbd> equip</span><span><kbd>CLICK</kbd> fire</span><span><kbd>ESC</kbd> pause</span></div>
+  <div id="notifications" aria-live="polite" aria-atomic="false"></div>
+  <div id="title-screen" class="screen">
+    <section class="title-copy">
+      <span class="masthead">THE NEIGHBOURHOOD IS STILL TALKING.</span>
+      <h1>Back on<br>the <em>Block.</em></h1>
+      <p class="tagline">A small city. A long memory.<br>Another chance to get your life together.</p>
+      <form id="new-game-form"><label for="seed">YOUR TOWN'S SEED</label><div class="seed-row"><input id="seed" maxlength="48" value="one-more-chance" autocomplete="off" spellcheck="false"><button type="button" id="shuffle-seed" aria-label="Choose another town seed">↻</button></div><button type="submit" class="primary">Start a new life <span>↗</span></button></form>
+      <button id="continue-button" class="secondary" disabled>Continue your story</button>
+      <p id="title-status" class="fine">Loading the neighbourhood...</p>
+      <div class="title-links"><a href="design/Game%20Design.html" target="_blank" rel="noopener">The full design document</a><button id="credits-button">Credits & controls</button></div>
+    </section>
+    <aside class="title-note"><span>ROOM TO LET</span><p>Small deposit.<br>Big expectations.</p><small>Ask for Nikhil.<br>He said you'd be coming.</small></aside>
+    <footer class="title-footer">AN OPEN-WORLD SECOND CHANCE <span>BOUNCE BACK</span></footer>
+  </div>
+  <section id="modal" class="modal-shade" hidden aria-label="Game panel"><article id="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><span id="modal-kicker" class="eyebrow">THE NEIGHBOURHOOD</span><h2 id="modal-title"></h2></div><button id="close-modal" class="square" aria-label="Close panel">×</button></header><div id="modal-content"></div><footer id="modal-actions"></footer></article></section>
+  <div id="touch-controls" hidden><div><button data-touch="a" aria-label="Move left">←</button><button data-touch="w" aria-label="Move up">↑</button><button data-touch="s" aria-label="Move down">↓</button><button data-touch="d" aria-label="Move right">→</button></div><div><button data-tap="e">USE</button><button data-tap="h">HEAL</button></div></div>
+  <input type="file" id="import-save" accept="application/json,.json" hidden>
+  <input type="file" id="import-music" accept="audio/*" hidden>
+</main>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
