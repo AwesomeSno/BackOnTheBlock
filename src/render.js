@@ -88,6 +88,12 @@ function getWorld(state) {
   return state.world || { width: 2816, height: 2816, buildings: [], parks: [], roads: {} };
 }
 
+function hasEventMarker(event) {
+  if (event.stage !== 'open' && event.stage !== 'accepted') return false;
+  const foundProperty = event.type === 'dropped_wallet' || event.type === 'lost_bag';
+  return !(foundProperty && event.collected);
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d', { alpha: false });
   const assets = {};
@@ -625,7 +631,7 @@ export function createRenderer(canvas) {
   }
 
   function drawActor(actor, state, isPlayer = false, selected = false) {
-    if (!Number.isFinite(actor.x) || !Number.isFinite(actor.y) || actor.vehicleId || !inView(actor.x, actor.y)) return;
+    if (!Number.isFinite(actor.x) || !Number.isFinite(actor.y) || actor.vehicleId || actor.passengerOf || !inView(actor.x, actor.y)) return;
     const x = Math.round(actor.x);
     const y = Math.round(actor.y);
     const t = state.elapsed || 0;
@@ -757,7 +763,7 @@ export function createRenderer(canvas) {
   function drawMarkers(state, view) {
     const player = state.player || {};
     for (const event of state.events || []) {
-      if (!['open', 'accepted'].includes(event.stage) || !inView(event.x, event.y) || !Number.isFinite(event.x)) continue;
+      if (!hasEventMarker(event) || !inView(event.x, event.y) || !Number.isFinite(event.x)) continue;
       if ((event.interior || null) !== (player.interior || null)) continue;
       const pulse = view.reducedMotion ? 0 : Math.sin((state.elapsed || 0) * 3) * 2;
       ctx.strokeStyle = COLORS.gold;
@@ -912,7 +918,7 @@ export function createRenderer(canvas) {
     };
   }
 
-  function drawMap(targetCanvas, state, full = false) {
+  function drawMap(targetCanvas, state, full = false, waypoint = null) {
     if (!state?.world) return;
     const world = state.world;
     const width = Math.max(1, targetCanvas.clientWidth || (full ? 600 : 180));
@@ -947,7 +953,7 @@ export function createRenderer(canvas) {
     mapCtx.restore();
     function point(x, y) { return [offsetX + x * scale, offsetY + y * scale]; }
     for (const event of state.events || []) {
-      if (!['open', 'accepted'].includes(event.stage) || !Number.isFinite(event.x)) continue;
+      if (!hasEventMarker(event) || !Number.isFinite(event.x)) continue;
       const naturallyVisible = !state.player.interior && !event.interior && Math.hypot(event.x - state.player.x, event.y - state.player.y) <= 300;
       if (!event.known && !naturallyVisible) continue;
       const eventBuilding = event.interior ? world.buildings.find(item => item.id === event.interior) : null;
@@ -963,6 +969,15 @@ export function createRenderer(canvas) {
       if (npc.role !== 'police' || npc.interior) continue;
       const [x, y] = point(npc.x, npc.y);
       ellipse(mapCtx, x, y, full ? 2.5 : 1.5, full ? 2.5 : 1.5, '#4d7d98');
+    }
+    if (waypoint) {
+      const place = waypoint.interior && world.buildings.find(building => building.id === waypoint.interior);
+      const target = place?.door || waypoint;
+      const [x, y] = point(target.x, target.y);
+      const size = full ? 12 : 8;
+      line(mapCtx, x, y, x, y - size * 1.5, COLORS.ink, full ? 3 : 2);
+      polygon(mapCtx, [[x, y - size * 1.55], [x + size, y - size * 1.17], [x, y - size * 0.8]], COLORS.ink);
+      polygon(mapCtx, [[x + 1, y - size * 1.42], [x + size * .68, y - size * 1.17], [x + 1, y - size * .93]], COLORS.gold);
     }
     let playerX = state.player.x;
     let playerY = state.player.y;

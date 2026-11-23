@@ -106,7 +106,7 @@ export function createGame(seed = 'back-on-the-block') {
       interior: null, vehicleId: null, companionId: null, caseEvidence: [], moving: false, attackCooldown: 0,
       hurtCooldown: 0, shotCooldown: 0, magazine: 0, reloadingUntil: 0, equipped: false, identified: false, lastSeen: null, lastCrime: -1000, exposure: 0 },
     npcs: [], vehicles: [], events: [], cases: [], effects: [], messages: [], journal: [],
-    story: { phase: 0, clues: [], resolved: false, ending: null, debt: 240, parcel: false, parcelInspected: false,
+    story: { phase: 0, welcomed: false, clues: [], resolved: false, ending: null, debt: 240, parcel: false, parcelInspected: false,
       accepted: false, declined: false, delivered: false, illegalRuns: 0, employerWarned: false },
     job: null, eventCooldown: 22, eventIndex: 0, eventHistory: [], eventCooldowns: {}, eventQueue: [], hangout: null, worldChanges: {},
     stats: { jobs: 0, helped: 0, crimes: 0, arrests: 0, deliveries: 0 }, dirty: false,
@@ -121,7 +121,7 @@ export function createGame(seed = 'back-on-the-block') {
   state.npcs = people.map((person, index) => {
     const house = homes[index % Math.max(1, homes.length)] || home;
     const work = building(state, roleWork[person[1]] || 'office');
-    const location = index === 0 ? { x: state.player.x + 43, y: state.player.y + 12 } : work.door;
+    const location = index === 0 ? openPosition(world, { x: state.player.x + 43, y: state.player.y + 12 }) : work.door;
     return { id: `npc-${index}`, name: person[0], role: person[1], age: 23 + index % 28, homeId: house.id, workId: work.id,
       x: location.x, y: location.y, interior: null, trust: index === 0 ? 28 : 0, memories: [], disclosures: [], sharedPast: [], lastDisclosure: -1000,
       task: index === 0 ? 'waiting to welcome you' : 'heading to work', personality: person[2], backstory: person[3],
@@ -218,6 +218,7 @@ function arrest(state) {
   state.player.cash -= fine;
   state.player.inventory.pistol = 0;
   state.player.inventory.ammo = 0;
+  state.player.equipped = false;
   state.player.magazine = 0;
   state.player.reloadingUntil = 0;
   state.player.vehicleId = null;
@@ -231,7 +232,7 @@ function arrest(state) {
   state.player.exposure = 0;
   state.stats.arrests++;
   for (const report of state.cases) report.resolved = true;
-  state.time = (state.time + 75) % 1440;
+  changeTime(state, 75);
   log(state, `Released after processing. Paid ₹${fine}; any weapon was confiscated. The clerk suggests trying a less memorable afternoon.`);
   pushMessage(state, 'Released. Your story and relationships continue.', 'story');
   state.recoveryNotice = { title: 'A very long form', text: `You paid ₹${fine}. The block is still there. Legal work is available.`, time: state.elapsed };
@@ -248,7 +249,7 @@ function recover(state) {
   state.player.exposure = 0;
   Object.assign(state.player, clinic.door);
   state.player.y += 30;
-  state.time = (state.time + 90) % 1440;
+  changeTime(state, 90);
   if (state.job) cancelJob(state, 'Your accepted job ended when you were taken to the clinic.');
   log(state, `The clinic patched you up for ₹${charge}. The nurse leaves a glass of water beside a form asking you to be more careful.`);
   pushMessage(state, 'Back on your feet. The clinic offers free basic triage if you are broke.', 'good');
@@ -863,7 +864,6 @@ function buy(state, key, cost, amount = 1) {
 }
 function setQuote(state, npc, text) {
   npc.lastQuote = text;
-  pushMessage(state, `${npc.name}: ${text}`, 'info');
   state.dirty = true;
   return { close: false, text };
 }
@@ -1089,7 +1089,13 @@ export function act(state, actionId, targetId = null) {
       break;
     case 'repair_car': {
       const car = state.vehicles.find(item => item.ownerId === 'player');
-      if (car && player.cash >= 25) { player.cash -= 25; car.health = 100; car.fuel = 100; Object.assign(car, { x: place.door.x + 62, y: place.door.y + 35, speed: 0 }); log(state, 'Paid ₹25. Rafi recovered, repaired and refuelled your car.'); pushMessage(state, 'Your car is ready outside.', 'good'); }
+      if (car && player.cash >= 25) {
+        const parking = openPosition(state.world, { x: place.door.x + 62, y: place.door.y + 35 }, 23);
+        player.cash -= 25;
+        Object.assign(car, parking, { health: 100, fuel: 100, speed: 0, parked: true });
+        log(state, 'Paid ₹25. Rafi recovered, repaired and refuelled your car.');
+        pushMessage(state, 'Your car is ready outside.', 'good');
+      }
       break;
     }
     case 'surrender': if (player.heat > 0 || player.investigation > 0) arrest(state); else pushMessage(state, 'There is no active case against you.', 'muted'); break;
@@ -1101,6 +1107,7 @@ export function act(state, actionId, targetId = null) {
         npc.trust = clamp(npc.trust + 3, -100, 100);
       }
       if (npc.role === 'friend') {
+        state.story.welcomed = true;
         remember(state, npc, 'welcome', 'You came home and made time to talk.', 0);
         return setQuote(state, npc, 'You can take a wrong turn without moving there permanently. Start with one paid shift. Eat something. Then decide whose advice costs too much.');
       }
@@ -1251,6 +1258,11 @@ export function objective(state) {
   }
   if (state.story.resolved) return finish('Free play • work, explore, build relationships and keep making a life.');
   if (state.story.phase === 0) {
+    if (state.story.welcomed) {
+      const depot = building(state, 'depot');
+      const target = player.interior === depot.id ? { ...depot.room.spots.counter, interior: depot.id } : depot.door;
+      return finish('Dispatch offer • visit the depot counter to hear about the delivery, or find work on your own.', target);
+    }
     const friend = state.npcs[0];
     return finish('Welcome home • talk to Nikhil, or investigate the depot’s delivery offer.', { x: friend.x, y: friend.y, interior: friend.interior });
   }
@@ -1288,12 +1300,12 @@ export function fromSave(data) {
   player.y = safeNumber(savedPlayer.y, player.y, player.interior ? 48 : 72, area.height - (player.interior ? 32 : 72));
   for (const [key, low, high] of [['hp', 1, 100], ['cash', 0, 1e7], ['stamina', 0, 100], ['honor', -100, 100], ['heat', 0, 100], ['investigation', 0, 100], ['angle', -1e4, 1e4]]) player[key] = safeNumber(savedPlayer[key], player[key], low, high);
   player.identified = Boolean(savedPlayer.identified);
-  player.equipped = Boolean(savedPlayer.equipped);
   player.magazine = Math.floor(safeNumber(savedPlayer.magazine, Math.min(6, finite(savedPlayer.inventory?.ammo)), 0, 6));
-  player.reloadingUntil = 0;
   player.lastCrime = safeNumber(savedPlayer.lastCrime, -1000, -1000, state.elapsed);
   player.lastSeen = savedPlayer.lastSeen && Number.isFinite(savedPlayer.lastSeen.x) && Number.isFinite(savedPlayer.lastSeen.y) ? { x: clamp(savedPlayer.lastSeen.x, 0, state.world.width), y: clamp(savedPlayer.lastSeen.y, 0, state.world.height), interior: validInterior(savedPlayer.lastSeen.interior), time: safeNumber(savedPlayer.lastSeen.time, 0, 0, state.elapsed) } : null;
   for (const [key, max] of [['medkit', 10], ['snack', 20], ['ammo', 200], ['pistol', 1]]) player.inventory[key] = Math.floor(safeNumber(savedPlayer.inventory?.[key], player.inventory[key], 0, max));
+  player.equipped = Boolean(savedPlayer.equipped && player.inventory.pistol);
+  player.reloadingUntil = player.inventory.pistol && savedPlayer.reloadingUntil > state.elapsed ? safeNumber(savedPlayer.reloadingUntil, 0, 0, state.elapsed + 1.1) : 0;
   player.magazine = Math.min(player.magazine, player.inventory.ammo);
   const strings = (value, max = 20) => Array.isArray(value) ? value.filter(item => typeof item === 'string').map(item => item.slice(0, 500)).slice(0, max) : [];
   if (Array.isArray(data.npcs)) {
@@ -1315,7 +1327,9 @@ export function fromSave(data) {
       npc.introduced = Boolean(saved.introduced);
       npc.romantic = Boolean(saved.romantic);
       npc.romanceAsked = Boolean(saved.romanceAsked);
-      npc.relation = npc.romantic ? 'dating' : npc.introduced ? (saved.relation === 'old friend' ? 'old friend' : 'neighbour') : 'stranger';
+      if (npc.romantic) npc.relation = 'dating';
+      else if (npc.introduced) npc.relation = ['old friend', 'friend'].includes(saved.relation) ? saved.relation : 'neighbour';
+      else npc.relation = 'stranger';
       npc.cash = safeNumber(saved.cash, npc.cash, 0, 1e7);
       npc.needs = { energy: safeNumber(saved.needs?.energy, 100, 0, 100), hunger: safeNumber(saved.needs?.hunger, 20, 0, 100) };
       npc.wageDay = safeNumber(saved.wageDay, 0, 0, state.day);
@@ -1338,6 +1352,7 @@ export function fromSave(data) {
   if (data.story && typeof data.story === 'object') {
     const saved = data.story;
     const story = state.story;
+    story.welcomed = Boolean(saved.welcomed) || state.npcs[0].memories.some(memory => memory.key === 'welcome');
     for (const key of ['resolved', 'parcel', 'parcelInspected', 'accepted', 'declined', 'delivered', 'employerWarned']) story[key] = Boolean(saved[key]);
     story.phase = Math.floor(safeNumber(saved.phase, 0, 0, 3));
     story.debt = safeNumber(saved.debt, 240, 0, 240);

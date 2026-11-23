@@ -7,3 +7,58 @@
 @media(max-width:620px){.screen{padding:25px;align-items:center;background:#f0e6cfe8}.title-copy{width:100%;max-width:400px}h1{font-size:72px;letter-spacing:-4px}.title-note{display:none}.masthead{font-size:9px}.tagline{font-size:13px;margin-bottom:18px}#new-game-form,.secondary{max-width:100%;width:100%}.title-footer{font-size:8px}.title-links{font-size:10px}.where{min-width:108px}.where .eyebrow{font-size:8px;letter-spacing:0}.where strong{font-size:13px}.vitals{width:90px;padding:8px}.cash{min-width:80px;padding:8px}.cash .eyebrow{font-size:7px;letter-spacing:0}.cash strong{font-size:17px}#pause-button{height:55px;min-width:33px}.square{min-width:34px}#minimap-button{top:78px}#minimap{width:90px;height:90px}#minimap-button>span{display:none}#legal{left:12px;transform:none;top:77px;width:190px}#legal label,#legal label span{font-size:8px}#objective{width:215px;bottom:112px;font-size:10px}#objective .eyebrow{font-size:9px}#objective p{font-size:14px}#toolbar{bottom:59px;left:12px;right:auto}#toolbar button{font-size:10px}#control-hints{display:none}#prompt{bottom:17px;max-width:90%;white-space:nowrap}#notifications{top:220px;width:240px}.toast{font-size:10px}#modal-card>header{padding:18px}h2{font-size:27px}#modal-content{padding:16px 18px;font-size:13px}#modal-actions{padding:0 18px 18px}.modal-shade{padding:10px}#modal-card{max-height:calc(100dvh - 20px)}.action-option{font-size:12px;padding:8px}.action-option small{font-size:10px}.title-footer{bottom:12px}}
 @media(max-height:650px) and (min-width:621px){.screen{padding-top:24px;padding-bottom:35px}h1{font-size:80px;margin:18px 0}.tagline{margin-bottom:15px}.title-links{margin-top:10px}.title-footer{bottom:10px}.fine{margin:7px 0}.title-note{top:27%}.masthead{padding-top:7px}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important}.modal-shade{backdrop-filter:none}}
+
+/* Keep street controls below open panels, including on touchscreens. */
+#game-shell {min-height:0}
+#modal {z-index:5}
+#modal:not([hidden]) ~ #touch-controls {visibility:hidden}
+#notifications {z-index:6}
+#touch-controls {display:flex;align-items:end;bottom:max(12px,env(safe-area-inset-bottom));left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));user-select:none}
+#touch-controls .direction-pad {display:grid;grid-template-columns:repeat(3,44px);grid-template-areas:". up ." "left down right";gap:3px}
+.direction-pad [data-touch="w"] {grid-area:up}
+.direction-pad [data-touch="a"] {grid-area:left}
+.direction-pad [data-touch="s"] {grid-area:down}
+.direction-pad [data-touch="d"] {grid-area:right}
+#touch-controls .touch-actions {display:grid;grid-template-columns:repeat(2,minmax(48px,auto));gap:3px}
+#touch-controls button {min-width:0;min-height:44px;padding:5px 8px;box-shadow:2px 2px 0 #273b3844;font-size:12px;font-weight:700}
+#touch-controls .direction-pad button {font-size:18px}
+#prompt {pointer-events:none}
+@media (any-pointer:coarse) {
+  #control-hints {display:none}
+  #toolbar {bottom:calc(112px + env(safe-area-inset-bottom))}
+  #objective {bottom:calc(112px + env(safe-area-inset-bottom))}
+  #prompt {bottom:calc(14px + env(safe-area-inset-bottom));max-width:36vw}
+  #toolbar kbd {display:none}
+}
+@media (any-pointer:coarse) and (max-width:680px) {
+  #toolbar {left:auto;right:12px}
+  #toolbar button:not([data-panel="journal"]) {display:none}
+  #toolbar button {min-height:39px;font-size:12px}
+  #prompt {bottom:calc(112px + env(safe-area-inset-bottom));left:12px;transform:none;max-width:calc(100% - 118px);min-height:39px;padding:6px 10px;gap:7px;white-space:normal}
+  #prompt kbd {display:none}
+  #objective {width:min(295px,calc(100% - 24px));bottom:calc(161px + env(safe-area-inset-bottom))}
+}
+@media (max-height:550px) {
+  .screen {display:block;overflow-y:auto;padding:16px 5% 22px}
+  .title-copy {max-width:420px}
+  .title-copy h1 {font-size:54px;line-height:.9;margin:12px 0}
+  .title-copy .tagline {margin:7px 0 11px}
+  .title-footer {position:static;margin-top:18px}
+  .title-note {top:17%}
+  #modal-card>header {padding:10px 15px}
+  #modal-card h2 {font-size:24px}
+  #modal-content {padding:10px 15px}
+  #modal-actions {padding:0 15px 12px}
+}
+@media (any-pointer:coarse) and (max-height:500px) and (min-width:681px) {
+  #minimap-button {top:77px}
+  #minimap {width:76px;height:76px}
+  #minimap-button>span {display:none}
+  #legal {top:12px;left:57%;width:190px}
+  #objective {bottom:111px;max-width:185px;padding:7px 9px}
+  #objective p {font-size:12px}
+  #toolbar {bottom:111px}
+  #toolbar button:not([data-panel="journal"]) {display:none}
+  #notifications {top:76px;left:12px;width:190px}
+}
+.map-wrap canvas {display:block;width:min(100%,54vh);height:auto;aspect-ratio:1;max-height:none;margin-inline:auto}

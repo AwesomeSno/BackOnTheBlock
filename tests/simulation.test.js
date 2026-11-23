@@ -96,7 +96,12 @@ test('identified officer witness creates pursuit and surrender restores playable
   assert.ok(state.player.heat > 0);
   assert.ok(state.player.investigation > 0);
   assert.equal(state.cases[0].witnesses[0].id, officer.id);
+  state.player.inventory.pistol = 1;
+  state.player.equipped = true;
+  state.time = 1410;
   act(state, 'surrender');
+  assert.equal(state.player.equipped, false);
+  assert.equal(state.day, 2);
   assert.equal(state.player.heat, 0);
   assert.equal(state.player.vehicleId, null);
   assert.equal(state.player.interior, null);
@@ -156,6 +161,16 @@ test('independent and criminal endings have distinct real conditions', () => {
   act(criminal, 'join_partner', depot.id);
   assert.equal(criminal.story.ending, 'partner');
   assert.equal(criminal.story.illegalRuns, 3);
+  for (const ended of [independent, criminal]) {
+    const resumed = fromSave(toSave(ended));
+    assert.equal(resumed.story.ending, ended.story.ending);
+    const cash = resumed.player.cash;
+    const office = counter(resumed, 'office');
+    act(resumed, 'office_shift', office.id);
+    seconds(resumed, 23);
+    assert.equal(resumed.player.cash, cash + 48);
+    assert.match(objective(resumed).text, /Free play/);
+  }
 });
 
 test('hangout rewards actual time once and disclosure persists privately', () => {
@@ -236,7 +251,7 @@ test('all retail purchases charge once per accepted action with valid inventory 
 });
 
 test('equipped empty gun stays empty, and reload transfers available total into a magazine', () => {
-  const state = createGame('ammo');
+  let state = createGame('ammo');
   state.player.inventory.pistol = 1;
   state.player.inventory.ammo = 7;
   state.player.magazine = 0;
@@ -248,6 +263,7 @@ test('equipped empty gun stays empty, and reload transfers available total into 
   tick(state, 0.1, { fire: true });
   assert.equal(nearbyPerson.hp, 100);
   act(state, 'reload');
+  state = fromSave(toSave(state));
   seconds(state, 1.2);
   assert.equal(state.player.magazine, 6);
   assert.equal(state.player.inventory.ammo, 7);
@@ -273,7 +289,7 @@ test('private protagonist disclosure requires trust and calm, and belongs to tha
 });
 
 test('owned vehicle entry, driving, exit and remote repair preserve one valid player', () => {
-  const state = createGame('car-recovery');
+  const state = createGame('service-5');
   const car = state.vehicles[0];
   Object.assign(state.player, { x: car.x, y: car.y, interior: null });
   act(state, 'vehicle_enter', car.id);
@@ -292,6 +308,23 @@ test('owned vehicle entry, driving, exit and remote repair preserve one valid pl
   assert.equal(car.fuel, 100);
   assert.equal(state.player.cash, 0);
   assert.ok(isWalkable(state.world, car.x, car.y, 23));
+});
+
+test('the welcome sends Alex to the dispatch counter and survives earlier save formats', () => {
+  const state = createGame('dispatch-signpost');
+  const friend = state.npcs[0];
+  const depot = buildingByType(state.world, 'depot');
+  assert.equal(objective(state).target.x, friend.x);
+  const messageCount = state.messages.length;
+  act(state, 'talk', friend.id);
+  assert.equal(state.messages.length, messageCount);
+  assert.deepEqual(objective(state).target, depot.door);
+  const saved = toSave(state);
+  delete saved.story.welcomed;
+  const resumed = fromSave(saved);
+  assert.deepEqual(objective(resumed).target, depot.door);
+  counter(resumed, 'depot');
+  assert.deepEqual(objective(resumed).target, { ...depot.room.spots.counter, interior: depot.id });
 });
 
 test('known assault victim remembers attacker, absent people receive no identity knowledge', () => {
@@ -384,9 +417,21 @@ test('found property requires meeting the owner, persists in transit and rewards
   assert.equal(restoredOwner.trust, 12);
 });
 
-test('a hundred seeds place every car on navigable ground', () => {
+test('a hundred seeds place every car and the welcoming friend on navigable ground', () => {
   for (let index = 0; index < 100; index++) {
-    const state = createGame('parking-' + index);
+    const state = createGame('wake-' + index);
     for (const car of state.vehicles) assert.ok(isWalkable(state.world, car.x, car.y, 23), `seed ${index}, ${car.id}`);
+    const friend = state.npcs[0];
+    assert.ok(isWalkable(state.world, friend.x, friend.y, 10));
+    assert.ok(nearby(state).some(target => target.id === friend.id));
   }
+});
+
+test('the photograph gives a hint while leaving private disclosures for conversations', () => {
+  const state = createGame('photograph');
+  const home = counter(state, 'home');
+  act(state, 'home_history', home.id);
+  assert.match(state.journal[0].text, /classroom fan/);
+  assert.ok(state.journal.every(entry => !/apprenticeship|signed off|training/i.test(entry.text)));
+  assert.ok(state.npcs.every(person => !person.sharedPast.length));
 });

@@ -37,7 +37,18 @@
     <footer class="title-footer">AN OPEN-WORLD SECOND CHANCE <span>BOUNCE BACK</span></footer>
   </div>
   <section id="modal" class="modal-shade" hidden aria-label="Game panel"><article id="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><span id="modal-kicker" class="eyebrow">THE NEIGHBOURHOOD</span><h2 id="modal-title"></h2></div><button id="close-modal" class="square" aria-label="Close panel">×</button></header><div id="modal-content"></div><footer id="modal-actions"></footer></article></section>
-  <div id="touch-controls" hidden><div><button data-touch="a" aria-label="Move left">←</button><button data-touch="w" aria-label="Move up">↑</button><button data-touch="s" aria-label="Move down">↓</button><button data-touch="d" aria-label="Move right">→</button></div><div><button data-tap="e">USE</button><button data-tap="h">HEAL</button></div></div>
+  <div id="touch-controls" hidden>
+    <div class="direction-pad" role="group" aria-label="Movement">
+      <button data-touch="w" aria-label="Move up or accelerate">↑</button>
+      <button data-touch="a" aria-label="Move left or steer left">←</button>
+      <button data-touch="s" aria-label="Move down or reverse">↓</button>
+      <button data-touch="d" aria-label="Move right or steer right">→</button>
+    </div>
+    <div class="touch-actions" role="group" aria-label="Street actions">
+      <button data-tap="e">Use</button><button data-touch="shift" id="touch-pace">Run</button>
+      <button data-tap="h">Heal</button><button data-tap="r" id="touch-extra" hidden>Reload</button>
+    </div>
+  </div>
   <input type="file" id="import-save" accept="application/json,.json" hidden>
   <input type="file" id="import-music" accept="audio/*" hidden>
 </main>
