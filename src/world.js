@@ -193,7 +193,14 @@ function navigation(world,interior) {
   const cell=room?16:24,cols=Math.ceil(space.width/cell),rows=Math.ceil(space.height/cell);
   const free=new Uint8Array(cols*rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)free[y*cols+x]=isWalkable(world,(x+.5)*cell,(y+.5)*cell,10,interior)?1:0;
-  const nav={cell,cols,rows,free,paths:new Map()};navCache.set(space,nav);return nav;
+  const links=new Uint8Array(free.length);
+  for(let i=0;i<free.length;i++){
+    if(!free[i])continue;
+    const x=(i%cols+.5)*cell,y=(Math.floor(i/cols)+.5)*cell;
+    if(i%cols<cols-1&&free[i+1]&&isWalkable(world,x+cell/2,y,10,interior)){links[i]|=1;links[i+1]|=2;}
+    if(i+cols<free.length&&free[i+cols]&&isWalkable(world,x,y+cell/2,10,interior)){links[i]|=4;links[i+cols]|=8;}
+  }
+  const nav={cell,cols,rows,free,links,paths:new Map()};navCache.set(space,nav);return nav;
 }
 function clearSegment(world,a,b,radius,room) {
   const steps=Math.max(1,Math.ceil(distance(a,b)/8));
@@ -222,14 +229,15 @@ export function findPath(world,from,to) {
   const key=start+':'+end;
   let route=nav.paths.get(key);
   if(!route) {
+    const offsets=[1,-1,cols,-cols];
     const queue=[start],parents=new Int32Array(cols*rows).fill(-1);parents[start]=start;
     for(let head=0;head<queue.length;head++){
       const at=queue[head];if(at===end)break;
-      for(const next of [at-1,at+1,at-cols,at+cols]){
-        if(next<0||next>=free.length||Math.abs(next%cols-at%cols)>1||!free[next]||parents[next]>=0)continue;
-        // Narrow objects can lie between two free cell centres.
-        const p=point(at),q=point(next);
-        if(!isWalkable(world,(p.x+q.x)/2,(p.y+q.y)/2,10,room))continue;
+      const mask=nav.links[at];
+      for(let side=0;side<4;side++){
+        if(!(mask&(1<<side)))continue;
+        const next=at+offsets[side];
+        if(parents[next]>=0)continue;
         parents[next]=at;queue.push(next);
       }
     }

@@ -1,6 +1,7 @@
 import {createGame,tick,nearby,interaction,act,toSave,fromSave,objective} from './simulation.js';
 import {createRenderer} from './render.js';
 import {distance} from './world.js';
+import {audibleLines,sayLine} from './island-life.js';
 
 const $=id=>document.getElementById(id);
 const canvas=$('world');
@@ -9,10 +10,23 @@ const saveKey=location.search.includes('debug')?'back-on-the-block-test-v1':'bac
 const settingsKey='back-on-the-block-settings';
 let settings={motion:!matchMedia('(prefers-reduced-motion: reduce)').matches,music:0.6};
 try {settings={...settings,...JSON.parse(localStorage.getItem(settingsKey)||'{}')};}catch{}
-let state=createGame('one-more-chance');
-let playing=false,modalOpen=false,currentPanel=null,previousFocus=null,currentTarget=null,manualWaypoint=null;
+let state=createGame();
+let playing=false,modalOpen=false,currentPanel=null,previousFocus=null,manualWaypoint=null;
 let keys=new Set(),fire=false,fireTap=false,lastTime=performance.now(),hudClock=0,saveClock=0;
 let pointer=null,aim=null,savedExists=false;
+let street=null,choicePage=0,choiceSignature='',subtitleSignature='';
+let hintUntil=0;
+const hudElements=['hud','legal','minimap-button','objective','toolbar'];
+const choiceCount=3;
+const spokenActions = {
+  talk: 'How’s your day going?', history: 'Tell me a little about yourself.',
+  ask_delivery: 'What have you heard about the clinic runs?', friend_advice: 'What would you do?',
+  hangout: 'Got time to hang out?', invite: 'Want to walk with me?', gift: 'Here. I brought you something.',
+  apologize: 'I’m sorry about what happened.', romance: 'You want to go out sometime?',
+  return_found: 'I think you lost this.', warn_witness: 'Hold on. Can we talk about that call?',
+  surrender: 'I’d like to talk about my case.', report_story: 'I have something to report.',
+  close: 'See you around.'
+};
 const touchInput=matchMedia('(any-pointer: coarse)');
 function destination(goal) {
   const point=manualWaypoint||goal.target;
@@ -23,7 +37,7 @@ function destination(goal) {
   return point;
 }
 const music=new Audio();
-music.loop=true;music.volume=settings.music;
+music.loop=true;music.volume=Math.max(0,Math.min(1,Number(settings.music)||0));
 let musicURL=null;
 const diagnostic=location.search.includes('debug')?document.createElement('output'):null;
 if(diagnostic){diagnostic.id='game-diagnostics';diagnostic.hidden=true;document.body.append(diagnostic);}
@@ -34,13 +48,14 @@ const escapeText=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<
 function notify(text,tone='normal') {
   const node=document.createElement('div');node.className=`toast ${tone==='danger'?'bad':tone}`;node.textContent=text;
   $('notifications').append(node);
-  while($('notifications').children.length>4)$('notifications').firstElementChild.remove();
-  setTimeout(()=>node.remove(),6500);
+  while($('notifications').children.length>2)$('notifications').firstElementChild.remove();
+  setTimeout(()=>node.remove(),4700);
 }
 function storageAvailable() {
   try{savedExists=!!localStorage.getItem(saveKey);}catch{savedExists=false;}
-  $('continue-button').disabled=!savedExists;
-  $('title-status').textContent=savedExists?'Your last life is saved on this browser.':'One town per seed. What happens here is up to you.';
+  $('continue-button').hidden=!savedExists;
+  const first = savedExists ? $('continue-button') : $('new-game');
+  selectMenuItem(first);
 }
 function save(showNotice=false) {
   if(!playing)return;
@@ -53,27 +68,30 @@ function save(showNotice=false) {
     notify('Browser storage is unavailable. Use Export save in the pause menu to keep your progress.','bad');
   }
 }
-function start(seed,resume=false) {
+function selectMenuItem(item) {
+  for(const button of $('main-menu').querySelectorAll('button')) button.classList.toggle('is-selected',button===item);
+}
+function start(resume=false) {
   try {
-    const next=resume?fromSave(JSON.parse(localStorage.getItem(saveKey))):createGame(seed.trim()||'one-more-chance');
-    state=next;playing=true;manualWaypoint=null;pointer=null;aim=null;seenMessages.clear();lastEndingNotice=null;lastRecoveryNotice=null;
+    const next=resume?fromSave(JSON.parse(localStorage.getItem(saveKey))):createGame();
+    state=next;playing=true;manualWaypoint=null;pointer=null;aim=null;
+    seenMessages.clear();lastEndingNotice=null;lastRecoveryNotice=null;
+    clearStreet();clearSpeech();$('notifications').replaceChildren();
     $('title-screen').hidden=true;
-    for(const id of ['hud','legal','minimap-button','objective','toolbar','control-hints'])$(id).hidden=false;
+    for(const id of hudElements) $(id).hidden=false;
     $('touch-controls').hidden=!touchInput.matches;
+    hintUntil=state.elapsed+(resume?0:12);
+    $('control-hints').hidden=resume||touchInput.matches;
     closeModal();
+    canvas.focus({preventScroll:true});
+    refreshHUD();
     save();
-    if(!resume) {
-      openModal('A room. A job. A fresh start.','BACK ON THE BLOCK');
-      paragraph("Nikhil said the room was sorted. The job too. For once, arriving here might actually have been a good idea.");
-      paragraph("He's waiting outside your room. Walk over and say something. Or take a look around first. The city has already started its day.");
-      paragraph(touchInput.matches?'Walk with the arrows. Tap Use near a person, door, or car. Tap the map to find places.':'WASD or arrows to walk. Shift to run. E near people, doors, vehicles, and objects. Your map marks useful places.');
-      addAction('Step outside',()=>closeModal(),'',true);
-    }
     if(musicURL&&settings.music>0)music.play().catch(()=>{});
   }catch(error){notify(`Could not open that save. ${error.message}`,'bad');}
 }
 function openModal(title,kicker='THE NEIGHBOURHOOD',panel=null) {
   if(!modalOpen)previousFocus=document.activeElement;
+  clearStreet();document.body.classList.add('dialog-open');
   modalOpen=true;currentPanel=panel;keys.clear();fire=false;fireTap=false;
   $('modal').hidden=false;$('modal-title').textContent=title;$('modal-kicker').textContent=kicker;
   $('modal-content').replaceChildren();$('modal-actions').replaceChildren();
@@ -81,9 +99,10 @@ function openModal(title,kicker='THE NEIGHBOURHOOD',panel=null) {
   music.pause();
 }
 function closeModal() {
-  modalOpen=false;currentPanel=null;currentTarget=null;
+  modalOpen=false;currentPanel=null;document.body.classList.remove('dialog-open');
   $('modal').hidden=true;keys.clear();fire=false;fireTap=false;
-  previousFocus?.focus?.();
+  if(playing) canvas.focus({preventScroll:true});
+  else previousFocus?.focus?.({preventScroll:true});
   if(playing&&musicURL&&settings.music>0)music.play().catch(()=>{});
 }
 function paragraph(text,className='') {
@@ -95,39 +114,117 @@ function addAction(label,callback,hint='',primary=false,disabled=false) {
   if(hint){const small=document.createElement('small');small.textContent=hint;button.append(small);}
   button.addEventListener('click',callback);$('modal-actions').append(button);return button;
 }
-function perform(action,targetId=null,keepTarget=null) {
+function clearStreet() {
+  street=null;choicePage=0;choiceSignature='';
+  $('street-actions').hidden=true;document.body.classList.remove('busy-street');
+}
+function clearSpeech() {
+  subtitleSignature='';$('subtitles').replaceChildren();
+}
+function hearDirect(npc,text) {
+  if(text&&npc) sayLine(state,npc,text,'dialogue');
+}
+function refreshSpeech() {
+  const lines=audibleLines(state);
+  const signature=lines.map(line=>line.id).join(',');
+  if(signature===subtitleSignature)return;
+  subtitleSignature=signature;
+  const captions=lines.map(line=>{
+    const row=document.createElement('div');row.className='caption';row.dataset.kind=line.kind;
+    const who=document.createElement('strong');who.textContent=line.speaker+'  ';
+    row.append(who,document.createTextNode(line.text));return row;
+  });
+  $('subtitles').replaceChildren(...captions);
+}
+function perform(action,targetId=null,target=null) {
   try {
+    const npc=target?.kind==='npc'?state.npcs.find(n=>n.id===targetId):null;
+    const askedLeave=npc&&action==='invite'&&state.player.companionId===npc.id;
     const result=act(state,action,targetId)||{};
-    saveClock=0;save();
-    if(result.close===false&&keepTarget)openInteraction(keepTarget);
-    else {
-      closeModal();
-      if(result.text)notify(result.text,result.tone||'normal');
+    if(npc) {
+      const privateNote=action==='share_past'&&state.journal.find(note=>note.text?.includes('privately:'));
+      const line=privateNote?.text?.match(/“(.+)”/)?.[1]||(askedLeave?'Catch you later.':spokenActions[action]);
+      if(line) hearDirect(state.player,line);
+      if(result.text) hearDirect(npc,result.text);
     }
-    refreshHUD();
-  } catch(error){notify(`That action could not finish. ${error.message}`,'bad');console.error(error);}
+    if(result.close===false&&target) {
+      choiceSignature='';renderStreet();
+    } else {
+      clearStreet();
+      if(modalOpen)closeModal();
+      if(result.text&&!npc)notify(result.text,result.tone||'normal');
+    }
+    saveClock=0;save();refreshHUD();
+  }catch(error){notify(`That action could not finish. ${error.message}`,'bad');console.error(error);}
 }
 function openInteraction(target) {
   const data=interaction(state,target);
   if(!data)return;
-  openModal(data.title||target.label,data.subtitle||'UP CLOSE');currentTarget=target;
-  paragraph(data.body||'');
-  for(const option of data.options||[]) {
-    addAction(option.label,()=>perform(option.id,target.id,target),option.hint||'',false,!!option.disabled);
+  choicePage=0;choiceSignature='';
+  street={target};
+  if(target.kind==='npc') {
+    const actor=state.npcs.find(n=>n.id===target.id);
+    const greeting=data.greeting || data.body.match(/^[“"]([^”"]+)[”"]/)?.[1];
+    if(actor&&greeting) {
+      hearDirect(actor,greeting.replace(/^[“"]|[”"]$/g,''));
+      actor.conversationUntil=state.elapsed+.65;
+    }
   }
-  if(!data.options?.some(option=>option.id==='close'))addAction('Leave it for now',closeModal);
+  renderStreet();
+}
+function renderStreet() {
+  if(!street)return;
+  const targets=nearby(state);
+  const target=street.target;
+  if(!targets.length||(target&&!targets.some(t=>t.id===target.id&&t.kind===target.kind))) {clearStreet();return;}
+  const data=target?interaction(state,target):null;
+  if(target&&!data){clearStreet();return;}
+  let choices,detail='',heading;
+  if(target) {
+    heading=data.title;
+    if(target.kind==='npc') {
+      const npc=state.npcs.find(n=>n.id===target.id);
+      detail=npc?.identity?.occupation||'';
+    } else detail=data.body||'';
+    choices=(data.options||[]).filter(opt=>opt.id!=='close').map(opt=>({
+      label:opt.label,disabled:!!opt.disabled,hint:opt.hint||'', action:()=>perform(opt.id,target.id,target)
+    }));
+  } else {
+    heading='Nearby';
+    choices=targets.map(t=>({label:t.label,hint:t.kind==='npc'?'Speak':t.kind==='building'?'Entrance':t.kind==='vehicle'?'Vehicle':'Inspect',action:()=>openInteraction(t)}));
+  }
+  const pages=Math.max(1,Math.ceil(choices.length/choiceCount));
+  choicePage=Math.min(choicePage,pages-1);
+  const page=choices.slice(choicePage*choiceCount,(choicePage+1)*choiceCount);
+  const signature=JSON.stringify([heading,detail,choicePage,choices.map(item=>[item.label,item.hint,item.disabled])]);
+  if(signature===choiceSignature)return;
+  choiceSignature=signature;
+  $('street-actions').hidden=false;document.body.classList.add('busy-street');
+  $('street-heading').textContent=heading;$('street-detail').textContent=detail;
+  const options=page.map((choice,index)=>{
+    const button=document.createElement('button');button.className='street-choice';button.disabled=!!choice.disabled;
+    const key=document.createElement('kbd');key.textContent=index+1;
+    const label=document.createElement('span');label.textContent=choice.label;
+    if(choice.hint&&(!target||target.kind!=='npc'||choice.disabled)) {
+      const small=document.createElement('small');small.textContent=choice.hint;label.append(small);
+    }else if(choice.hint)button.title=choice.hint;
+    button.append(key,label);button.onclick=choice.action;return button;
+  });
+  $('street-options').replaceChildren(...options);
+  const more=$('more-options');more.hidden=pages<2;
+  if(pages>1){more.textContent=`More  ·  ${choicePage+1}/${pages}   [Q]`;more.onclick=()=>{choicePage=(choicePage+1)%pages;renderStreet();};}
 }
 function interact() {
   if(!playing||modalOpen)return;
+  if(street){clearStreet();return;}
   const targets=nearby(state);
-  if(!targets.length){notify('Get closer to a door, a person, a vehicle, or an event.');return;}
+  if(!targets.length){notify('Move closer to a person, door or vehicle.');return;}
   if(targets.length===1){openInteraction(targets[0]);return;}
-  openModal('What are you looking at?','NEAR YOU');
-  targets.slice(0,7).forEach(target=>addAction(target.label,()=>openInteraction(target),target.kind));
+  street={target:null};choicePage=0;choiceSignature='';renderStreet();
 }
 function panelTabs(active) {
   const tabs=document.createElement('nav');tabs.className='panel-tabs';tabs.setAttribute('aria-label','Notebook sections');
-  for(const [id,label] of [['bag','Bag'],['people','People'],['journal','Notes'],['case','Your record'],['map','Map']]) {
+  for(const [id,label] of [['bag','Bag'],['people','Contacts'],['journal','Notes'],['case','Your record'],['map','Map']]) {
     const button=document.createElement('button');button.textContent=label;button.className=id===active?'active':'';
     button.onclick=()=>showPanel(id);tabs.append(button);
   }
@@ -135,8 +232,8 @@ function panelTabs(active) {
 }
 function showPanel(id) {
   if(!playing)return;
-  const titles={bag:'What you have.',people:'People you know.',journal:'Worth remembering.',case:'Your side of the story.',map:'Find your way.'};
-  openModal(titles[id]||'Notebook','YOUR NOTEBOOK',id);panelTabs(id);
+  const titles={bag:'Inventory',people:'Contacts',journal:'Journal',case:'Police record',map:'Port Lucero'};
+  openModal(titles[id]||'Journal','FIELD NOTES',id);panelTabs(id);
   if(id==='bag') {
     const inventory=state.player.inventory;
     const items=[['medkit','First aid kit','Restores health. Keep one for a bad day.','use_medkit'],['snack','Something to eat','A little health and energy.','use_snack'],['ammo','Pistol rounds','Includes ammunition already in the magazine.'],['pistol','Pistol',touchInput.matches?'Equip here and tap the street to aim and fire.':'F to equip or put away. Click or J to fire.','equip']];
@@ -149,13 +246,18 @@ function showPanel(id) {
     paragraph('Supplies are available at shops and the clinic. The garage repairs vehicles and sells fuel.','hint');
     if(state.player.companionId)addAction('Ask your companion to head home',()=>perform('dismiss_companion'));
   } else if(id==='people') {
-    const known=state.npcs.filter(n=>n.introduced||n.trust!==0||n.role==='friend');
+    const known=state.npcs.filter(n=>n.introduced||n.role==='friend');
     paragraph('Spend time together. Keep your promises. Everyone remembers their own version of you.','hint');
     if(!known.length)paragraph('Get out and meet someone. Names will end up here.');
     for(const npc of known) {
       const row=document.createElement('section');row.className='person-row';
       const trust=Number(npc.trust||0);
       row.innerHTML=`<strong>${escapeText(npc.name)}</strong> <span class="hint">${escapeText(npc.role)}</span><div class="detail">${trust>65?'Close':trust>30?'Warming up':trust< -20?'Wary':'Getting to know you'} · trust ${Math.round(trust)}<progress max="200" value="${trust+100}" aria-label="Trust"></progress></div>`;
+      const identity=npc.identity;
+      if(identity) {
+        const about=document.createElement('p');about.className='detail';
+        about.textContent=[identity.occupation,identity.languages?.join(' / '),identity.detail].filter(Boolean).join(' · ');row.append(about);
+      }
       const memories=(npc.memories||[]).slice(0,3);
       for(const memory of memories){const p=document.createElement('p');p.className='detail';p.textContent=typeof memory==='string'?memory:memory.text||memory.type||'A shared moment';row.append(p);}
       if(npc.sharedPast?.length){const p=document.createElement('p');p.className='detail';p.textContent=`You've shared ${npc.sharedPast.length} personal memories with them.`;row.append(p);}
@@ -172,12 +274,19 @@ function showPanel(id) {
     }
   } else if(id==='case') {
     const player=state.player;
-    paragraph(`Your conduct sits at ${Math.round(player.honor||0)}. This is your history. A person can only react to what they saw, experienced, or heard.`);
-    paragraph(`Immediate danger ${Math.round(player.heat||0)} / 100. Investigation ${Math.round(player.investigation||0)} / 100.`);
-    const records=state.cases||state.incidents||[];
-    if(!records.length)paragraph('There is nothing in your record yet.');
-    for(const record of records.slice(-12))paragraph(`${record.type||record.kind||'Incident'}${record.resolved?' · resolved':''}. ${record.description||record.text||(record.witnesses?.length?`${record.witnesses.length} witnesses. ${record.identified?'Identified suspect.':'Identity unconfirmed.'}`:'')}`);
-    paragraph('Breaking line of sight helps end a pursuit. A case can remain after the chase. Visit the police counter to surrender or resolve a fine.','hint');
+    paragraph(`Personal standing  ${Math.round(player.honor||0)}   ·   ${state.policeStatus?.label||'No current alert'}`);
+    const records=(state.cases||[]).filter(record=>record.reported||record.witnesses?.some(w=>w.status==='reported'));
+    if(!records.length)paragraph('No reports on file.');
+    for(const record of records.slice(-12).reverse()) {
+      const statements=(record.witnesses||[]).filter(w=>w.status==='reported');
+      const descriptions=statements.flatMap(w=>{
+        const d=w.description||{};
+        return Object.entries(d).filter(([,value])=>value).map(([field,value])=>`${field}: ${value}`);
+      });
+      const details=[...new Set(descriptions)].join(', ');
+      paragraph(`${record.type||'Incident'} · ${record.resolved?'Closed':record.identified?'Identified suspect':'Identity unconfirmed'}${details?' · Reported details: '+details:''}`);
+    }
+    paragraph('Witnesses can describe what they saw. A report can stay on file after the search ends.','hint');
   } else if(id==='map') {
     const wrap=document.createElement('div');wrap.className='map-wrap';
     const map=document.createElement('canvas');map.width=680;map.height=680;map.setAttribute('aria-label','Town map. The arrow marks your position. A flag marks your current destination.');wrap.append(map);$('modal-content').append(wrap);renderer.drawMap(map,state,true,manualWaypoint||objective(state).target);
@@ -195,44 +304,54 @@ function showPanel(id) {
 }
 function exportSave() {
   const blob=new Blob([JSON.stringify(toSave(state),null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`back-on-the-block-${state.seed}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`port-lucero-day-${state.day}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function showPause() {
   if(!playing)return;
-  openModal('Take a minute.','PAUSED','pause');
-  paragraph(`Day ${state.day||1} in ${state.seed}. Your city waits while this panel is open.`);
-  addAction('Back to the street',closeModal,'',true);
+  openModal('Paused','PORT LUCERO','pause');
+  paragraph(`Day ${state.day||1} · ${$('location').textContent}`);
+  addAction('Resume',closeModal,'',true);
   addAction('Save your progress',()=>save(true));
   addAction('Export save',exportSave,'Keep a copy outside this browser');
   addAction('Import save',()=>$('import-save').click());
   addAction('Settings',showSettings);
   addAction('Controls & credits',()=>showCredits(true));
-  addAction('Back to the title',()=>{save();playing=false;closeModal();$('title-screen').hidden=false;for(const id of ['hud','legal','minimap-button','objective','toolbar','control-hints','prompt','touch-controls'])$(id).hidden=true;storageAvailable();});
+  addAction('Main menu',()=>{
+    save();playing=false;clearStreet();clearSpeech();closeModal();$('notifications').replaceChildren();
+    $('title-screen').hidden=false;
+    for(const id of [...hudElements,'control-hints','prompt','touch-controls'])$(id).hidden=true;
+    storageAvailable();$('continue-button').focus();
+  });
 }
 function storeSettings(){try{localStorage.setItem(settingsKey,JSON.stringify(settings));}catch{}}
 function showSettings() {
-  openModal('Make yourself comfortable.','SETTINGS','settings');
-  paragraph('The soundtrack is waiting for your tracks. You can preview a local audio file here. It stays on this device and needs to be selected again after a reload.');
+  openModal('Settings','PORT LUCERO','settings');
+  paragraph('Choose a local audio file to play on a loop while you’re on the street.');
   addAction('Preview a background track',()=>$('import-music').click());
   const musicLabel=document.createElement('label');musicLabel.textContent='Music volume';
   const slider=document.createElement('input');slider.type='range';slider.min='0';slider.max='1';slider.step='.05';slider.value=settings.music;slider.setAttribute('aria-label','Music volume');slider.oninput=()=>{settings.music=Number(slider.value);music.volume=settings.music;storeSettings();};musicLabel.append(slider);$('modal-content').append(musicLabel);
   addAction(`Extra motion ${settings.motion?'on':'off'}`,()=>{settings.motion=!settings.motion;storeSettings();showSettings();});
   if(musicURL)addAction('Remove preview track',()=>{music.pause();music.removeAttribute('src');URL.revokeObjectURL(musicURL);musicURL=null;showSettings();});
-  addAction('Back',showPause);
+  addAction('Back',playing?showPause:closeModal);
 }
 function showCredits(inGame=false) {
-  openModal('The people behind the block.','CONTROLS & CREDITS','credits');
+  openModal('Controls & credits','BACK ON THE BLOCK','credits');
   paragraph('WASD or arrows: walk. Shift: run. E: interact. In a car, W/S accelerate or reverse and A/D steer. Space brakes. G honks. F equips or stows a pistol. Click or J fires. R reloads. H uses a first aid kit. M map. N people. I bag. L notes. Escape pauses.');
   if(touchInput.matches)paragraph('Use the arrows to move or steer. Hold Run to sprint or Brake to slow your car. Tap a spot on the street to strike or fire in that direction. Open Bag in the notebook to equip a pistol.');
-  paragraph('Your town is generated from a seed. Its people and consequences persist in the save. The story has several ways out, and the neighbourhood keeps going afterward.');
-  paragraph('Concept and direction from Harinand. Development with OpenAI Codex assistance. Sprite artwork from the supplied PostApocalypse Asset Pack by TheLazyStone. The city uses deterministic procedural drawing. No image or music generation tools were used for this build.');
-  paragraph('The supplied asset licence permits noncommercial game use and requires payment for commercial use. See assets/LICENSE.txt. Background music is pending your tracks. Multiplayer and deeper life-simulation features remain future work.','hint');
+  paragraph('Press E near a resident. Pick a topic with 1, 2 or 3, and Q for more. Conversations play out in the street. Walk away or press E to leave.');
+  paragraph('Concept and direction from Harinand. Development with OpenAI Codex assistance. Vehicle and prop artwork from the supplied PostApocalypse Asset Pack by TheLazyStone. Barlow Condensed by the Barlow Project Authors. The city uses deterministic procedural drawing. No image or music generation tools were used for this build.');
+  paragraph('Sprite license details are in assets/LICENSE.txt. The display typeface is distributed under the SIL Open Font License.','hint');
   addAction('Read the full design document',()=>window.open('design/Game%20Design.html','_blank','noopener'));
   addAction('Close',inGame?showPause:closeModal);
 }
 function handleKey(key) {
+  if(key==='escape'&&street){clearStreet();return;}
   if(key==='escape'||key==='p') {if(modalOpen)closeModal();else showPause();return;}
   if(!playing||modalOpen)return;
+  if(street&&['1','2','3'].includes(key)){
+    $('street-options').children[Number(key)-1]?.click();return;
+  }
+  if(street&&key==='q'&&!$('more-options').hidden){$('more-options').click();return;}
   if(key==='e')interact();
   const panels={m:'map',n:'people',i:'bag',l:'journal'};
   if(panels[key])showPanel(panels[key]);
@@ -243,6 +362,18 @@ function handleKey(key) {
 }
 window.addEventListener('keydown',event=>{
   const key=event.key.toLowerCase();
+  if(!playing&&!modalOpen) {
+    const menu=[...$('main-menu').querySelectorAll('button:not([hidden])')];
+    const selected=menu.indexOf($('main-menu').querySelector('.is-selected'));
+    if(['arrowup','arrowdown','w','s'].includes(key)) {
+      event.preventDefault();
+      const direction=['arrowup','w'].includes(key)?-1:1;
+      const item=menu[(selected+direction+menu.length)%menu.length];item.focus();selectMenuItem(item);
+    }else if(key==='enter'&&!event.repeat&&document.activeElement?.tagName!=='BUTTON') {
+      event.preventDefault();menu[Math.max(0,selected)]?.click();
+    }
+    return;
+  }
   if(!modalOpen&&(event.target instanceof HTMLInputElement||event.target instanceof HTMLTextAreaElement))return;
   if(!modalOpen&&playing&&['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key))event.preventDefault();
   if(modalOpen&&key==='tab') {
@@ -261,14 +392,19 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.clear
 canvas.addEventListener('pointermove',event=>{pointer={x:event.clientX,y:event.clientY};});
 canvas.addEventListener('pointerdown',event=>{if(playing&&!modalOpen&&event.button===0){pointer={x:event.clientX,y:event.clientY};fire=true;fireTap=true;canvas.setPointerCapture(event.pointerId);}});
 canvas.addEventListener('pointerup',()=>fire=false);canvas.addEventListener('pointercancel',()=>fire=false);
-$('new-game-form').onsubmit=event=>{
-  event.preventDefault();
-  if(savedExists){openModal('Start over in another town?','NEW LIFE');paragraph('Starting a new life replaces the browser save. You can keep your current one by continuing it and choosing Export save from Pause.');addAction('Start this new life',()=>start($('seed').value),'',true);addAction('Keep my saved life',closeModal);}
-  else start($('seed').value);
+$('new-game').onclick=()=>{
+  if(!savedExists){start();return;}
+  openModal('Start a new game?','PORT LUCERO');
+  paragraph('This replaces your local progress. You can export the current save from the pause menu.');
+  addAction('Start new game',()=>start(),'',true);addAction('Keep current game',closeModal);
 };
-$('continue-button').onclick=()=>start('',true);
-$('shuffle-seed').onclick=()=>{const words=['after-rain','borrowed-time','small-miracles','wrong-turn','better-days','last-bus'];$('seed').value=words[Math.floor(Math.random()*words.length)]+'-'+Math.floor(Math.random()*999);};
+$('continue-button').onclick=()=>start(true);
+for(const item of $('main-menu').querySelectorAll('button')) {
+  item.addEventListener('pointerenter',()=>selectMenuItem(item));item.addEventListener('focus',()=>selectMenuItem(item));
+}
+$('settings-button').onclick=showSettings;
 $('credits-button').onclick=()=>showCredits();$('close-modal').onclick=closeModal;
+$('prompt').onclick=interact;$('end-interaction').onclick=clearStreet;
 $('pause-button').onclick=showPause;$('save-button').onclick=()=>save(true);$('minimap-button').onclick=()=>showPanel('map');
 document.querySelectorAll('[data-panel]').forEach(button=>button.onclick=()=>showPanel(button.dataset.panel));
 document.querySelectorAll('[data-touch]').forEach(button=>{
@@ -280,7 +416,7 @@ document.querySelectorAll('[data-tap]').forEach(button=>button.onclick=()=>handl
 $('import-save').onchange=async event=>{
   const file=event.target.files[0];event.target.value='';if(!file)return;
   if(file.size>4000000){notify('That save file is too large.','bad');return;}
-  try{const loaded=fromSave(JSON.parse(await file.text()));state=loaded;manualWaypoint=null;save();closeModal();notify('Save imported. Welcome back.','good');}catch(error){notify(`Could not import that save. ${error.message}`,'bad');}
+  try{const loaded=fromSave(JSON.parse(await file.text()));state=loaded;manualWaypoint=null;clearStreet();clearSpeech();seenMessages.clear();lastEndingNotice=null;lastRecoveryNotice=null;save();closeModal();notify('Save imported. Welcome back.','good');}catch(error){notify(`Could not import that save. ${error.message}`,'bad');}
 };
 $('import-music').onchange=event=>{
   const file=event.target.files[0];event.target.value='';if(!file)return;
@@ -291,9 +427,12 @@ function refreshHUD() {
   const p=state.player,world=state.world,room=world.buildings.find(b=>b.id===p.interior);
   if(diagnostic)diagnostic.textContent=JSON.stringify({seed:state.seed,player:p,job:state.job,story:state.story,nearby:nearby(state),buildings:world.buildings.map(({id,type,name,door,room})=>({id,type,name,door,spots:room.spots})),npcs:state.npcs.map(({id,name,x,y,interior,trust,task,sharedPast})=>({id,name,x,y,interior,trust,task,sharedPast}))});
   const hour=Math.floor(state.time/60)%24,minute=Math.floor(state.time)%60;
-  $('location').textContent=room?room.name:world.districts[(p.y>=1408?2:0)+(p.x>=1408?1:0)];
-  $('clock').textContent=`DAY ${state.day||1} · ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-  $('money').textContent=`₹${Math.floor(p.cash).toLocaleString()}`;
+  const roadMidX=world.roads.vertical[2],roadMidY=world.roads.horizontal[2];
+  $('location').textContent=room?room.name:world.districts[(p.y>=roadMidY?2:0)+(p.x>=roadMidX?1:0)];
+  $('day-label').textContent=`DAY ${String(state.day||1).padStart(2,'0')}`;
+  $('clock').textContent=`${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  $('money').textContent=`$${Math.floor(p.cash).toLocaleString('en-US')}`;
+  $('control-hints').hidden=touchInput.matches||state.elapsed>=hintUntil||!!street||modalOpen;
   $('health').value=p.hp;$('health-text').textContent=Math.ceil(p.hp);
   const vehicle=state.vehicles.find(v=>v.id===p.vehicleId);
   if(touchInput.matches) {
@@ -304,16 +443,23 @@ function refreshHUD() {
     $('touch-extra').dataset.tap=vehicle?'g':'r';
   }
   $('vehicle-status').textContent=vehicle?`FUEL ${Math.round(vehicle.fuel)} · CAR ${Math.round(vehicle.health)}`:(p.equipped?`${p.magazine||0}/6 LOADED · ${Math.max(0,(p.inventory.ammo||0)-(p.magazine||0))} SPARE`:`ENERGY ${Math.round(p.stamina)}`);
-  $('pursuit').value=p.heat||0;$('investigation').value=p.investigation||0;
-  $('pursuit-status').textContent=p.heat>65?'Police closing in':p.heat>5?'Being pursued':'Clear';
-  $('case-status').textContent=p.investigation>5?'Open investigation':'No active case';
+  const dispatch=state.policeStatus||{stage:'clear',seconds:0,label:'Clear'};
+  $('legal').dataset.stage=dispatch.stage;
+  const marker={witness:25,search:10,pursuit:90,'on file':38}[dispatch.stage]||50;
+  $('legal').style.setProperty('--dispatch-marker',marker+'%');
+  $('case-status').textContent=dispatch.label;
+  const seconds=Math.max(0,Math.ceil(dispatch.seconds||0));
+  $('dispatch-timer').textContent=seconds?`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`:'';
   const goal=objective(state);
   $('chapter').textContent=state.story.resolved?'LIFE GOES ON':['GETTING SETTLED','LOOSE ENDS','A WAY OUT','A SECOND CHANCE'][state.story.phase]||'YOUR NEIGHBOURHOOD';
   $('objective-text').textContent=goal.text;
   const point=destination(goal);
   $('waypoint-text').textContent=point&&!p.interior?`${manualWaypoint?.name||'Next lead'} · ${Math.round(distance(p,point)/10)} m`:'';
-  const targets=nearby(state);$('prompt').hidden=!targets.length||modalOpen;
-  if(targets.length)$('prompt-text').textContent=targets.length>1?`${targets[0].label} + ${targets.length-1} nearby`:targets[0].label;
+  const targets=nearby(state);
+  if(street&&!modalOpen)renderStreet();
+  $('prompt').hidden=!targets.length||modalOpen||!!street;
+  if(targets.length)$('prompt-text').textContent=targets.length>1?`Nearby · ${targets[0].label}`:targets[0].label;
+  if(!modalOpen)refreshSpeech();
   renderer.drawMap($('minimap'),state,false,manualWaypoint||goal.target);
   if(state.endingNotice&&lastEndingNotice!==state.endingNotice.time) {
     lastEndingNotice=state.endingNotice.time;
@@ -338,6 +484,10 @@ function refreshHUD() {
 function frame(now) {
   const dt=Math.min(0.04,(now-lastTime)/1000);lastTime=now;
   if(playing&&!modalOpen) {
+    if(street?.target?.kind==='npc') {
+      const actor=state.npcs.find(n=>n.id===street.target.id);
+      if(actor&&actor.interior===state.player.interior&&distance(actor,state.player)<85)actor.conversationUntil=state.elapsed+.65;
+    }
     const held=key=>keys.has(key);
     aim=pointer?renderer.screenToWorld(pointer.x,pointer.y):null;
     const input={x:Number(held('d')||held('arrowright'))-Number(held('a')||held('arrowleft')),y:Number(held('s')||held('arrowdown'))-Number(held('w')||held('arrowup')),run:held('shift'),brake:held(' '),fire:fire||fireTap||held('j'),aim};
@@ -347,7 +497,7 @@ function frame(now) {
     if(saveClock>20){saveClock=0;save();}
   }
   const goal=objective(state);
-  renderer.draw(state,{aim,highlight:playing&&!modalOpen?nearby(state)[0]:null,reducedMotion:!settings.motion,waypoint:destination(goal)});
+  renderer.draw(state,{title:!playing,time:now/1000,aim,highlight:playing&&!modalOpen?nearby(state)[0]:null,reducedMotion:!settings.motion,waypoint:destination(goal)});
   hudClock+=dt;if(hudClock>.12){hudClock=0;refreshHUD();}
   requestAnimationFrame(frame);
 }

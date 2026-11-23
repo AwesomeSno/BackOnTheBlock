@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {generateWorld,findPath,isWalkable,buildingByType,moveActor,canSee} from '../src/world.js';
 
-test('seeds reproduce buildings, terrain, and interior arrangements',()=>{
+test('new lives share Port Lucero’s fixed geography, skyline and shoreline',()=>{
   const a=generateWorld('rain-on-tuesday'),b=generateWorld('rain-on-tuesday'),c=generateWorld('other-side');
-  assert.deepEqual(a,b);assert.notDeepEqual(a,c);
-  assert.notDeepEqual(a.roads,c.roads);
+  assert.deepEqual(a,b);assert.deepEqual(a,c);
+  assert.equal(a.name,'Port Lucero');assert.ok(a.buildings.some(b=>b.floors>=12));
+  assert.equal(isWalkable(a,a.water.shoreX+16,200),false);
 });
 
 test('every generated building is reachable from the starting home',()=>{

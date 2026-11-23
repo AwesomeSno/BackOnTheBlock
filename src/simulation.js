@@ -1,38 +1,68 @@
+import {initializeLife, updateLife, restoreLife, residentRoutine} from './island-life.js';
+import {drive,hitsCar} from './driving.js';
+import {outfits, noteOffense, pendingStatement, warnWitness, updatePolice, restoreStatements} from './police.js';
+import {migrateIslandSave} from './save-migration.js';
 import { generateWorld, hashSeed, random, distance, moveActor, findPath, canSee, buildingByType, isWalkable } from './world.js';
 
-const VERSION = 1;
+const VERSION = 2;
 const MINUTES_PER_SECOND = 2.4;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 const finite = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
 const sameRoom = (a, b) => (a.interior || null) === (b.interior || null);
 const openingHours = { shop: [420, 1320], cafe: [420, 1380], depot: [360, 1260], office: [480, 1080], garage: [420, 1200] };
 const people = [
-  ['Nikhil', 'friend', 'Keeps his promises, then complains about them.', 'You grew up on this block together. He stayed while you tried an electrical apprenticeship.'],
-  ['Kavya', 'courier', 'Quick-witted and careful about who gets close.', 'She moved here to keep her younger brother in school. The depot keeps delaying her wages.'],
-  ['Leela', 'shopkeeper', 'Practical, watchful, quietly generous.', 'She once lost the shop to a bad loan. A neighbour bought it back, one monthly payment at a time.'],
-  ['Rafi', 'mechanic', 'Patient with engines, less patient with excuses.', 'His father taught him to repair things before buying replacements. He still owns the first wrench.'],
-  ['Sana', 'nurse', 'Kind without being easily fooled.', 'She worked night shifts during the flood. She remembers who opened their doors.'],
-  ['Dev', 'dispatcher', 'Calls every complication a small administrative issue.', 'He has been altering dispatch records for Varun. The mistakes were never accidental.'],
-  ['Varun', 'broker', 'Polite until a person becomes an expense.', 'He hides stolen clinic supplies in legitimate consignments and calls the losses insurance work.'],
-  ['Meera', 'clerk', 'Dry humour, excellent records.', 'She has saved a little each month for her own print shop. The business plan is longer than most novels.'],
-  ['Asha', 'neighbour', 'Observant, proud, slow to ask for help.', 'She looked after your mother during your last year away. She never expected repayment.'],
-  ['Imran', 'cook', 'Feeds people before asking questions.', 'His old restaurant closed. He started again with a hotplate and three borrowed chairs.'],
-  ['Officer Balan', 'police', 'A patient witness statement beats a dramatic chase.', 'He knows the depot has problems. He needs evidence that can survive a hearing.'],
-  ['Officer Roy', 'police', 'Very serious about forms in triplicate.', 'He joined to help people, and spends most afternoons finding missing bicycles.'],
-  ['Tara', 'student', 'Curious, independent, allergic to bad advice.', 'She repairs old radios to pay for college. Her first sale was to your mother.'],
-  ['Manu', 'gardener', 'Quiet until somebody steps on a seedling.', 'He planted the park after the flood. Half its trees are named after people who helped.'],
-  ['Priya', 'resident', 'Organised, sceptical, surprisingly funny.', 'She lost an office job and built a small bookkeeping practice from her kitchen.'],
-  ['Joseph', 'driver', 'Knows every shortcut and every bad boss.', 'He used to drive the clinic van. He recognises its missing supplies on the depot loading list.'],
-  ['Anu', 'resident', 'Friendly but protective of her time.', 'She cares for an elderly aunt and still makes it to the evening walking club.'],
-  ['Gopi', 'vendor', 'Has a price for almost everything.', 'He is saving to move his stall out of the rain. His expensive sandwiches subsidise the free ones.'],
-  ['Fathima', 'teacher', 'Gentle questions, very difficult follow-ups.', 'She taught you arithmetic. She remembers you were better at fixing the classroom fan.'],
-  ['Vinod', 'worker', 'Talks big when he feels small.', 'He hurt his hand on an unpaid shift. He is worried the depot will replace him.'],
-  ['Neha', 'resident', 'Takes promises literally.', 'She built a mutual-aid list during the flood and still keeps it updated.'],
-  ['Suraj', 'worker', 'Always looking for the next way forward.', 'He is studying for a bus licence. Every practice test lives in his lunch box.'],
-  ['Latha', 'resident', 'Likes company and notices absences.', 'She has lived on this street for forty years. The map has changed more often than she has.'],
-  ['Arun', 'resident', 'Easygoing, until somebody takes his bicycle.', 'He makes furniture from discarded timber and pays his rent in very ordinary instalments.']
+  ['Miles', 'friend', 'Keeps his promises, then complains about them.', 'You grew up on this block together. He stayed while you tried an electrical apprenticeship.'],
+  ['Elena', 'courier', 'Quick-witted and careful about who gets close.', 'She moved here to keep her younger brother in school. The depot keeps delaying her wages.'],
+  ['June', 'shopkeeper', 'Practical, watchful, quietly generous.', 'She once lost the shop to a bad loan. A neighbour bought it back, one monthly payment at a time.'],
+  ['Samir', 'mechanic', 'Patient with engines, less patient with excuses.', 'His father taught him to repair things before buying replacements. He still owns the first wrench.'],
+  ['Grace', 'nurse', 'Kind without being easily fooled.', 'She worked night shifts during the flood. She remembers who opened their doors.'],
+  ['Dean', 'dispatcher', 'Calls every complication a small administrative issue.', 'He has been altering dispatch records for Victor. The mistakes were never accidental.'],
+  ['Victor', 'broker', 'Polite until a person becomes an expense.', 'He hides stolen clinic supplies in legitimate consignments and calls the losses insurance work.'],
+  ['Isabel', 'clerk', 'Dry humour, excellent records.', 'She has saved a little each month for her own print shop. The business plan is longer than most novels.'],
+  ['Alma', 'neighbour', 'Observant, proud, slow to ask for help.', 'She looked after your mother during your last year away. She never expected repayment.'],
+  ['Tomas', 'cook', 'Feeds people before asking questions.', 'His old restaurant closed. He started again with a hotplate and three borrowed chairs.'],
+  ['Officer Reed', 'police', 'A patient witness statement beats a dramatic chase.', 'He knows the depot has problems. He needs evidence that can survive a hearing.'],
+  ['Officer Santos', 'police', 'Very serious about forms in triplicate.', 'He joined to help people, and spends most afternoons finding missing bicycles.'],
+  ['Emilia', 'student', 'Curious, independent, allergic to bad advice.', 'She repairs old radios to pay for college. Her first sale was to your mother.'],
+  ['Oscar', 'gardener', 'Quiet until somebody steps on a seedling.', 'He planted the park after the flood. Half its trees are named after people who helped.'],
+  ['Leila', 'resident', 'Organised, sceptical, surprisingly funny.', 'She lost an office job and built a small bookkeeping practice from her kitchen.'],
+  ['Felix', 'driver', 'Knows every shortcut and every bad boss.', 'He used to drive the clinic van. He recognises its missing supplies on the depot loading list.'],
+  ['Rosa', 'resident', 'Friendly but protective of her time.', 'She cares for an elderly aunt and still makes it to the evening walking club.'],
+  ['Theo', 'vendor', 'Has a price for almost everything.', 'He is saving to move his stall out of the rain. His expensive sandwiches subsidise the free ones.'],
+  ['Asha', 'teacher', 'Gentle questions, very difficult follow-ups.', 'She taught you arithmetic. She remembers you were better at fixing the classroom fan.'],
+  ['Darren', 'worker', 'Talks big when he feels small.', 'He hurt his hand on an unpaid shift. He is worried the depot will replace him.'],
+  ['Cass', 'resident', 'Takes promises literally.', 'She built a mutual-aid list during the flood and still keeps it updated.'],
+  ['Hugo', 'worker', 'Always looking for the next way forward.', 'He is studying for a bus licence. Every practice test lives in his lunch box.'],
+  ['Pearl', 'resident', 'Likes company and notices absences.', 'She has lived on this street for forty years. The map has changed more often than she has.'],
+  ['Leon', 'resident', 'Easygoing, until somebody takes his bicycle.', 'He makes furniture from discarded timber and pays his rent in very ordinary instalments.']
 ];
 
+const localConversation=[
+  'I’ve got the late call at the docks again. Drive me over sometime?',
+  'If another envelope says “delivery attempted” before I’ve even picked it up, I’m framing it.',
+  'The mangoes came in bruised. Half price today. My cat has already claimed the box.',
+  'Hear that little whine on the downshift? Drives me mad. Owner swears it’s the radio.',
+  'Quiet morning at the clinic. I stopped saying that out loud after the last time.',
+  'Three signatures for one crate. That’s efficiency. Says so right on the form.',
+  'I can get you a seat on the next launch. Whether you can afford the seat is between you and the captain.',
+  'Someone brought me a receipt printed on both sides of a ferry ticket. Which side goes in payroll?',
+  'See the blue stitching on that school uniform? I did the same job for her mum.',
+  'First boat’s in. That means the buns are ready even if the clock says otherwise.',
+  'Three lost bikes, one found dog. The dog’s the only one who gave a statement.',
+  'Pitch is dry enough for football tonight. I’ve been on the radio arranging a substitute.',
+  'Found an old tuner at the shop. It picks up San Juan if you hold the aerial just right.',
+  'The guava cutting took. Come by the park in a week and I’ll show you the new leaves.',
+  'Cinema club’s one ticket short of breaking even. I’ve bought it twice already.',
+  'Last stop asked me to wait for a man carrying a birthday cake. Try cornering with that on board.',
+  'I’ve got another call by the marina. Taking peppers from my window box over with me.',
+  'The best pineapple on the stall is the ugly one. Smell it before somebody else does.',
+  'The homework club wants to put its radio play on air. I promised them I’d ask Emilia.',
+  'Made a boat from packing wood. Sails straight unless you actually put it in the water.',
+  'Somebody finally returned the spare key. Now I have to work out which door it opens.',
+  'Bought a part for the outboard. Heavy enough to be right. We’ll find out Saturday.',
+  'The dance hall piano is flat again. Last night somebody used it as a drinks table.',
+  'Those offcuts by the quay? Enough for a chair if I keep the arms short.'
+];
 function openPosition(world, requested, radius = 10, interior = null) {
   if (isWalkable(world, requested.x, requested.y, radius, interior)) return { ...requested };
   for (let ring = 12; ring <= 360; ring += 12) {
@@ -86,9 +116,9 @@ function finishStory(state, ending) {
   state.story.parcel = false;
   state.story.debt = 0;
   const endings = {
-    evidence: 'The records are filed. Varun loses his contract, the clinic gets its supplies, and the block keeps moving. Your next shift is your own choice.',
+    evidence: 'The records are filed. Victor loses his contract, the clinic gets its supplies, and the block keeps moving. Your next shift is your own choice.',
     independent: 'The last payment clears. You walk out without signing another dispatch sheet. The city has ordinary work, difficult friends, and a future you can afford to plan.',
-    partner: 'Varun calls you a partner. Your pay improves, your neighbours are less certain about you, and the clinic keeps buying back what was already theirs. The city carries on.'
+    partner: 'Victor calls you a partner. Your pay improves, your neighbours are less certain about you, and the clinic keeps buying back what was already theirs. The city carries on.'
   };
   log(state, endings[ending]);
   pushMessage(state, 'CHAPTER COMPLETE • ' + (ending === 'evidence' ? 'The paper trail' : ending === 'independent' ? 'Your own terms' : 'The arrangement'), 'story');
@@ -96,12 +126,13 @@ function finishStory(state, ending) {
   state.dirty = true;
 }
 
-export function createGame(seed = 'back-on-the-block') {
-  const world = generateWorld(seed);
+export function createGame(seed = globalThis.crypto?.randomUUID?.() || String(Math.random())) {
+  const world = generateWorld();
   const state = {
     version: VERSION, seed, rngState: (hashSeed(seed) ^ 0x7a921b35) >>> 0,
     time: 480, elapsed: 0, day: 1, sequence: 0, world,
-    player: { x: 0, y: 0, angle: 0, hp: 100, maxHp: 100, cash: 85, stamina: 100,
+    policeStatus:{stage:'clear',seconds:0,label:'Clear'},
+    player: { name:'Alex',outfit:'denim',searchUntil:0,x: 0, y: 0, angle: 0, hp: 100, maxHp: 100, cash: 85, stamina: 100,
       honor: 0, heat: 0, investigation: 0, inventory: { medkit: 1, snack: 2, ammo: 0, pistol: 0 },
       interior: null, vehicleId: null, companionId: null, caseEvidence: [], moving: false, attackCooldown: 0,
       hurtCooldown: 0, shotCooldown: 0, magazine: 0, reloadingUntil: 0, equipped: false, identified: false, lastSeen: null, lastCrime: -1000, exposure: 0 },
@@ -133,85 +164,24 @@ export function createGame(seed = 'back-on-the-block') {
   });
   for (let index = 0; index < 12; index++) {
     const owner = state.npcs[index + 2];
-    const x = index === 0 ? home.door.x + 80 : world.roads.vertical[index % world.roads.vertical.length] + (index % 2 ? 24 : -24);
+    const x = index === 0 ? world.roads.vertical[1]+37 : world.roads.vertical[index % world.roads.vertical.length] + (index % 2 ? 41 : -41);
     const y = index === 0 ? home.door.y + 55 : world.roads.horizontal[Math.floor(index / 3) % 4] + 70 + index % 3 * 55;
     const parking = openPosition(world, { x: clamp(x, 90, world.width - 90), y: clamp(y, 90, world.height - 90) }, 23);
     state.vehicles.push({ id: `car-${index}`, x: parking.x, y: parking.y,
-      angle: Math.PI / 2, speed: 0, health: 100, fuel: 100, ownerId: index === 0 ? 'player' : owner.id,
+      angle: -Math.PI / 2, steer:0, speed: 0, health: 100, fuel: 100, ownerId: index === 0 ? 'player' : owner.id,
       color: ['#b66b52', '#738d86', '#c4ae72', '#748b9f', '#b4ada0'][index % 5], model: index % 4 === 0 ? 'van' : 'sedan', stolen: false, parked: true });
   }
-  log(state, 'You are Alex, 25. A job fell through, and you have returned to the block where you grew up. There is a room waiting and ₹240 in rent arrears. You can decide what comes next.');
-  log(state, 'Nikhil is waiting outside home. The dispatch depot has offered quick delivery money. The office and garage offer ordinary work.');
-  pushMessage(state, 'Back on the block. Talk to Nikhil, or head for the depot.', 'story');
+  initializeLife(state);
+  log(state, 'You are Alex, 25. A job fell through, and you have returned to the block where you grew up. There is a room waiting and $240 in rent arrears. You can decide what comes next.');
+  log(state, 'Miles is waiting outside home. The dispatch depot has offered quick delivery money. The office and garage offer ordinary work.');
+  pushMessage(state, 'Back on the block. Talk to Miles, or head for the depot.', 'story');
   return state;
 }
 
-function witnesses(state, source = state.player, range = 350) {
-  return state.npcs.filter(npc => npc.hp > 0 && sameRoom(npc, source) && distance(npc, source) < range && canSee(state.world, npc, source));
-}
-function crime(state, type, severity, victimId = null) {
-  const observers = witnesses(state);
-  const record = { id: `case-${++state.sequence}`, type, severity, x: state.player.x, y: state.player.y,
-    interior: state.player.interior, time: state.elapsed, day: state.day, witnesses: [], identified: false, resolved: false };
-  state.stats.crimes++;
-  state.player.honor = clamp(state.player.honor - severity * 2, -100, 100);
-  state.player.lastCrime = state.elapsed;
-  for (const npc of observers) {
-    const knows = npc.introduced || distance(npc, state.player) < 135;
-    record.witnesses.push({ id: npc.id, identified: knows });
-    record.identified ||= knows;
-    remember(state, npc, record.id, knows ? `Saw you ${type}.` : `Saw an unidentified person involved in ${type}.`, knows ? -severity * 5 : 0);
-    npc.panicUntil = state.elapsed + 14;
-  }
-  if (victimId && observers.some(npc => npc.id === victimId)) remember(state, npcById(state, victimId), record.id + '-victim', `You were involved when they lost something to ${type}.`, -severity * 8);
-  if (observers.length) {
-    state.cases.push(record);
-    state.player.investigation = clamp(state.player.investigation + severity * (record.identified ? 18 : 8), 0, 100);
-    state.player.identified ||= record.identified;
-    const officer = observers.find(npc => npc.role === 'police');
-    if (officer || (record.identified && severity >= 3)) {
-      state.player.heat = clamp(state.player.heat + severity * 24, 0, 100);
-      state.player.lastSeen = { x: state.player.x, y: state.player.y, interior: state.player.interior, time: state.elapsed };
-    }
-    pushMessage(state, record.identified ? `Witnesses identified you • ${type}` : `Witnesses reported ${type}. Your identity is uncertain.`, 'danger');
-    log(state, `${type}: ${observers.length} witness${observers.length === 1 ? '' : 'es'}${record.identified ? ' identified you' : ' reported an unknown suspect'}.`);
-  } else {
-    pushMessage(state, 'No one nearby witnessed that.', 'muted');
-  }
-  state.dirty = true;
-  return record;
+function crime(state,type,severity,victimId=null,vehicleId=null) {
+  return noteOffense(state,type,severity,victimId,vehicleId,remember,pushMessage,log);
 }
 
-function legalPressure(state, dt) {
-  const player = state.player;
-  const police = state.npcs.filter(npc => npc.role === 'police' && npc.hp > 0);
-  let visible = false;
-  for (const officer of police) {
-    const sees = sameRoom(officer, player) && distance(officer, player) < 320 && canSee(state.world, officer, player);
-    if (sees && player.heat > 0) {
-      visible = true;
-      officer.task = 'pursuing an identified suspect';
-      officer.path = [];
-      moveTowards(state, officer, player, 125, dt);
-      player.lastSeen = { x: player.x, y: player.y, interior: player.interior, time: state.elapsed };
-      if (distance(officer, player) < (player.vehicleId ? 37 : 29)) player.exposure += dt;
-    } else if (player.heat > 0 && player.lastSeen && state.elapsed - player.lastSeen.time < 18) {
-      const last = player.lastSeen;
-      officer.task = 'searching the last reported location';
-      if (officer.interior === last.interior) moveTowards(state, officer, last, 85, dt);
-      else travel(state, officer, last.interior, last, dt);
-    }
-  }
-  if (!visible) {
-    player.exposure = Math.max(0, player.exposure - dt * 1.8);
-    if (state.elapsed - player.lastCrime > 6) player.heat = Math.max(0, player.heat - dt * 1.3);
-  }
-  if (player.exposure > 2.5) arrest(state);
-  // An unconfirmed description fades. Identified reports remain until resolved.
-  if (!player.identified && player.heat <= 0 && state.elapsed - player.lastCrime > 40) {
-    player.investigation = Math.max(0, player.investigation - dt * 0.15);
-  }
-}
 function arrest(state) {
   const station = building(state, 'police');
   const fine = Math.min(state.player.cash, 35 + Math.round(state.player.investigation / 3));
@@ -229,13 +199,14 @@ function arrest(state) {
   state.player.heat = 0;
   state.player.investigation = 0;
   state.player.identified = false;
+  state.player.searchUntil=0;state.player.lastSeen=null;
   state.player.exposure = 0;
   state.stats.arrests++;
   for (const report of state.cases) report.resolved = true;
   changeTime(state, 75);
-  log(state, `Released after processing. Paid ₹${fine}; any weapon was confiscated. The clerk suggests trying a less memorable afternoon.`);
+  log(state, `Released after processing. Paid $${fine}; any weapon was confiscated. The clerk suggests trying a less memorable afternoon.`);
   pushMessage(state, 'Released. Your story and relationships continue.', 'story');
-  state.recoveryNotice = { title: 'A very long form', text: `You paid ₹${fine}. The block is still there. Legal work is available.`, time: state.elapsed };
+  state.recoveryNotice = { title: 'A very long form', text: `You paid $${fine}. The block is still there. Legal work is available.`, time: state.elapsed };
 }
 function recover(state) {
   const clinic = building(state, 'clinic');
@@ -251,9 +222,9 @@ function recover(state) {
   state.player.y += 30;
   changeTime(state, 90);
   if (state.job) cancelJob(state, 'Your accepted job ended when you were taken to the clinic.');
-  log(state, `The clinic patched you up for ₹${charge}. The nurse leaves a glass of water beside a form asking you to be more careful.`);
+  log(state, `The clinic patched you up for $${charge}. The nurse leaves a glass of water beside a form asking you to be more careful.`);
   pushMessage(state, 'Back on your feet. The clinic offers free basic triage if you are broke.', 'good');
-  state.recoveryNotice = { title: 'Back on your feet', text: `Treatment cost ₹${charge}. People remember what happened, but you can keep going.`, time: state.elapsed };
+  state.recoveryNotice = { title: 'Back on your feet', text: `Treatment cost $${charge}. People remember what happened, but you can keep going.`, time: state.elapsed };
 }
 
 function moveTowards(state, actor, target, speed, dt) {
@@ -269,7 +240,7 @@ function moveTowards(state, actor, target, speed, dt) {
 function travel(state, npc, targetInterior, targetPoint, dt) {
   if (npc.interior && npc.interior !== targetInterior) {
     const place = byId(state, npc.interior);
-    if (moveTowards(state, npc, place.room.exit, 65, dt)) {
+    if (navigate(state, npc, place.room.exit, dt, 65)) {
       npc.interior = null;
       npc.x = place.door.x;
       npc.y = place.door.y + 18;
@@ -289,16 +260,46 @@ function travel(state, npc, targetInterior, targetPoint, dt) {
     navigate(state, npc, destination.door, dt);
     return;
   }
-  if (npc.interior) moveTowards(state, npc, targetPoint, 52, dt);
-  else navigate(state, npc, targetPoint, dt);
+  navigate(state,npc,targetPoint,dt,npc.interior?52:64);
 }
-function navigate(state, npc, targetPoint, dt) {
-  if (!npc.path || !npc.path.length || state.elapsed > (npc.pathAt || 0) + 12) {
-    npc.path = findPath(state.world, npc, targetPoint) || [];
-    npc.pathAt = state.elapsed;
+function navigate(state,npc,target,dt,speed=65) {
+  if(distance(npc,target)<5){npc.moving=false;return true;}
+  const stale=!npc.pathGoal||npc.pathGoal.interior!==npc.interior||distance(npc.pathGoal,target)>18;
+  if(stale||(!npc.path?.length&&state.elapsed>=(npc.pathAt||0))){
+    npc.path=findPath(state.world,npc,target);
+    npc.pathGoal={x:target.x,y:target.y,interior:npc.interior};
+    npc.pathAt=state.elapsed+(npc.path.length?0:.8);
   }
-  const waypoint = npc.path[0] || targetPoint;
-  if (moveTowards(state, npc, waypoint, npc.panicUntil > state.elapsed ? 105 : 58, dt) && npc.path.length) npc.path.shift();
+  const point=npc.path?.[0];
+  if(!point){npc.moving=false;return distance(npc,target)<12;}
+  const d=distance(npc,point);
+  if(d<2){npc.path.shift();return !npc.path.length&&distance(npc,target)<12;}
+  npc.angle=Math.atan2(point.y-npc.y,point.x-npc.x);
+  const step=Math.min(speed*dt,d);
+  const prev={x:npc.x,y:npc.y};
+  moveActor(state.world,npc,Math.cos(npc.angle)*step,Math.sin(npc.angle)*step);
+  npc.moving=distance(npc,prev)>.1;
+  if(distance(npc,point)<2)npc.path.shift();
+  if(!npc.moving){npc.path=[];npc.pathAt=state.elapsed+.25;}
+  return !npc.path.length&&distance(npc,target)<12;
+}
+function separateResidents(state,dt) {
+  // Keep people standing side by side. Never push the player across a threshold.
+  const people=state.npcs.filter(n=>!n.passengerOf&&!n.inServiceVehicle&&n.hp>0);
+  for(let i=0;i<people.length;i++) {
+    const a=people[i];
+    for(let j=-1;j<i;j++){
+      const b=j<0?state.player:people[j];
+      if(b.vehicleId||!sameRoom(a,b))continue;
+      const dx=a.x-b.x,dy=a.y-b.y;
+      if(Math.abs(dx)>15||Math.abs(dy)>15)continue;
+      const d=Math.hypot(dx,dy);if(d>=15)continue;
+      const shove=Math.min(34*dt,(15-d)*(j<0?1:.5));
+      const ux=d?dx/d:Math.cos(i),uy=d?dy/d:Math.sin(i);
+      moveActor(state.world,a,ux*shove,uy*shove);
+      if(j>=0)moveActor(state.world,b,-ux*shove,-uy*shove);
+    }
+  }
 }
 function updateNPCs(state, dt) {
   for (const npc of state.npcs) {
@@ -313,6 +314,7 @@ function updateNPCs(state, dt) {
       npc.needs.hunger = Math.max(0, npc.needs.hunger - 45);
       npc.mealDay = state.day;
     }
+    if(npc.ambientBusy)continue;
     if (npc.hp <= 0) {
       npc.moving = false;
       npc.task = 'recovering at the clinic';
@@ -325,7 +327,8 @@ function updateNPCs(state, dt) {
       }
       continue;
     }
-    if (npc.role === 'police' && state.player.heat > 0) continue;
+    if(npc.policeDuty)continue;
+    if(npc.conversationUntil>state.elapsed && npc.panicUntil<=state.elapsed){npc.moving=false;continue;}
     if (npc.id === state.player.companionId && state.player.heat <= 0 && npc.trust >= 5) {
       if (state.player.vehicleId) {
         npc.passengerOf = state.player.vehicleId;
@@ -359,30 +362,11 @@ function updateNPCs(state, dt) {
       continue;
     }
     if (npc.scheduleAt > state.elapsed) { npc.moving = false; continue; }
-    let targetPlace;
-    let task;
-    if (npc.role === 'police') {
-      const junction = Math.floor(state.elapsed / 28 + Number(npc.id.slice(4))) % state.world.roads.horizontal.length;
-      const patrol = { x: state.world.roads.vertical[junction], y: state.world.roads.horizontal[(junction + 2) % state.world.roads.horizontal.length] };
-      npc.task = 'neighbourhood patrol';
-      travel(state, npc, null, patrol, dt);
-      continue;
-    }
-    const workStart = npc.role === 'cook' || npc.role === 'shopkeeper' ? 420 : 540;
-    if (state.time >= workStart && state.time < 1020) {
-      targetPlace = byId(state, npc.workId);
-      task = 'at work';
-    } else if (state.time >= 1020 && state.time < 1230) {
-      targetPlace = building(state, 'cafe');
-      task = 'taking an evening break';
-    } else {
-      targetPlace = byId(state, npc.homeId);
-      task = 'at home';
-    }
-    if (!targetPlace) continue;
-    npc.task = task;
-    npc.targetId = targetPlace.id;
-    travel(state, npc, targetPlace.id, { x: 230 + Number(npc.id.slice(4)) % 4 * 60, y: 330 }, dt);
+    const stop=residentRoutine(state,npc);
+    const place=byId(state,stop.targetId);
+    if(!place&&!stop.outside)continue;
+    npc.task=stop.task;npc.targetId=stop.targetId;
+    travel(state,npc,stop.outside?null:place.id,stop.point,dt);
   }
 }
 
@@ -405,23 +389,8 @@ function updatePlayer(state, dt, input) {
       exitVehicle(state);
       return;
     }
-    const acceleration = -y * (vehicle.fuel > 0 ? 135 : 0);
-    vehicle.speed += acceleration * dt;
-    vehicle.speed *= Math.exp(-dt * (input.brake ? 5.2 : 0.55));
-    vehicle.speed = clamp(vehicle.speed, -90, vehicle.model === 'van' ? 225 : 285);
-    if (Math.abs(vehicle.speed) > 6) vehicle.angle += x * dt * 2.1 * Math.sign(vehicle.speed) * Math.min(1, Math.abs(vehicle.speed) / 65);
-    const oldX = vehicle.x;
-    const oldY = vehicle.y;
-    vehicle.radius = 23;
-    vehicle.interior = null;
-    moveActor(state.world, vehicle, Math.cos(vehicle.angle) * vehicle.speed * dt, Math.sin(vehicle.angle) * vehicle.speed * dt);
-    const moved = Math.hypot(vehicle.x - oldX, vehicle.y - oldY);
-    if (moved < Math.abs(vehicle.speed) * dt * 0.35 && Math.abs(vehicle.speed) > 55) {
-      vehicle.health = Math.max(0, vehicle.health - Math.abs(vehicle.speed) * 0.045);
-      damagePlayer(state, Math.abs(vehicle.speed) * 0.025);
-      vehicle.speed *= -0.22;
-      state.effects.push({ kind: 'burst', x: vehicle.x, y: vehicle.y, life: 0.3, color: '#e5c087' });
-    }
+    const impact=drive(state,vehicle,x,-y,input.brake,dt);
+    if(impact)damagePlayer(state,impact*.022);
     vehicle.fuel = Math.max(0, vehicle.fuel - Math.abs(vehicle.speed) * dt * 0.0012);
     player.x = vehicle.x;
     player.y = vehicle.y;
@@ -429,7 +398,7 @@ function updatePlayer(state, dt, input) {
     player.moving = Math.abs(vehicle.speed) > 4;
     if (Math.abs(vehicle.speed) > 90) {
       for (const npc of state.npcs) {
-        if (npc.hp > 0 && !npc.interior && npc.passengerOf !== vehicle.id && npc.id !== player.companionId && distance(vehicle, npc) < 29 && player.hurtCooldown <= 0) {
+        if (npc.hp > 0 && !npc.interior && !npc.inServiceVehicle && npc.passengerOf !== vehicle.id && npc.id !== player.companionId && distance(vehicle, npc) < 29 && player.hurtCooldown <= 0) {
           hurtNPC(state, npc, 45, 'reckless driving');
           vehicle.speed *= 0.6;
           player.hurtCooldown = 0.8;
@@ -441,7 +410,12 @@ function updatePlayer(state, dt, input) {
     const running = input.run && player.stamina > 1 && magnitude > 0;
     const speed = running ? 175 : 112;
     if (magnitude) {
-      moveActor(state.world, player, x / Math.max(1, magnitude) * speed * dt, y / Math.max(1, magnitude) * speed * dt);
+      const dx=x/Math.max(1,magnitude)*speed*dt,dy=y/Math.max(1,magnitude)*speed*dt;
+      const cars=player.interior?[]:[...state.vehicles,...(state.life?.traffic||[]).filter(v=>v.active!==false)];
+      // A passing car can overlap a stationary pedestrian for a tick. Allow a step out.
+      const blocks=(px,py)=>cars.some(v=>hitsCar(px,py,v)&&!hitsCar(player.x,player.y,v));
+      if(!blocks(player.x+dx,player.y))moveActor(state.world,player,dx,0);
+      if(!blocks(player.x,player.y+dy))moveActor(state.world,player,0,dy);
       player.angle = Math.atan2(y, x);
     }
     player.moving = magnitude > 0;
@@ -492,7 +466,7 @@ function attack(state) {
   let victim = null;
   let nearestDistance = range;
   for (const npc of state.npcs) {
-    if (npc.hp <= 0 || !sameRoom(npc, player)) continue;
+    if (npc.hp <= 0 || npc.inServiceVehicle || npc.passengerOf || !sameRoom(npc, player)) continue;
     const d = distance(npc, player);
     const dot = ((npc.x - player.x) * direction.x + (npc.y - player.y) * direction.y) / Math.max(1, d);
     if (d < nearestDistance && dot > (armed ? 0.93 : 0.2) && canSee(state.world, player, npc)) {
@@ -572,10 +546,10 @@ function completeJob(state) {
     state.story.illegalRuns++;
     crime(state, 'handling stolen supplies', 2);
     remember(state, state.npcs[6], `illegal-${state.story.illegalRuns}`, 'You completed a knowing illicit consignment.', 6);
-    if (state.story.illegalRuns >= 3) pushMessage(state, 'Varun offers a partnership at the depot.', 'story');
+    if (state.story.illegalRuns >= 3) pushMessage(state, 'Victor offers a partnership at the depot.', 'story');
   }
-  log(state, `Completed ${job.kind === 'shift' ? 'a shift' : 'a delivery'}. Earned ₹${job.reward}.`);
-  pushMessage(state, `Work complete • +₹${job.reward}`, 'good');
+  log(state, `Completed ${job.kind === 'shift' ? 'a shift' : 'a delivery'}. Earned $${job.reward}.`);
+  pushMessage(state, `Work complete • +$${job.reward}`, 'good');
   state.job = null;
   if (state.stats.jobs === 1 && job.kind !== 'illicit') remember(state, state.npcs[0], 'first-job', 'You found ordinary work after coming home.', 4);
 }
@@ -591,7 +565,7 @@ function cancelJob(state, text) {
 
 function spawnEvent(state) {
   const types = ['dropped_wallet', 'injury', 'friend_favor', 'restock', 'wage_dispute', 'lost_bag'];
-  const available = state.npcs.filter(npc => npc.hp > 0 && npc.panicUntil <= state.elapsed && !state.events.some(event => event.npcId === npc.id && ['open', 'accepted'].includes(event.stage)));
+  const available = state.npcs.filter(npc => npc.hp > 0 && !npc.ambientBusy && npc.panicUntil <= state.elapsed && !state.events.some(event => event.npcId === npc.id && ['open', 'accepted'].includes(event.stage)));
   let queued = state.eventQueue.shift();
   let type;
   let npc;
@@ -676,8 +650,10 @@ export function tick(state, delta, input = {}) {
   state.player.lastX = state.player.x;
   state.player.lastY = state.player.y;
   updatePlayer(state, dt, input);
+  updateLife(state,dt);
+  updatePolice(state,dt,{navigate,travel,arrest,pushMessage});
   updateNPCs(state, dt);
-  legalPressure(state, dt);
+  separateResidents(state,dt);
   updateJob(state, dt);
   updateEvents(state, dt);
   state.effects = state.effects.filter(effect => (effect.life -= dt) > 0).slice(-100);
@@ -699,13 +675,13 @@ export function nearby(state) {
   const targets = [];
   const add = (kind, id, label, point, range) => {
     const d = distance(player, point);
-    if (d <= range) targets.push({ kind, id, label, distance: d });
+    if (d <= range && (player.interior || canSee(state.world,player,{...point,interior:null}))) targets.push({ kind, id, label, distance: d });
   };
   if (player.vehicleId) {
     add('vehicle', player.vehicleId, 'Leave vehicle', player, 1);
     return targets;
   }
-  for (const npc of state.npcs) if (npc.hp > 0 && sameRoom(player, npc)) add('npc', npc.id, npc.name, npc, 84);
+  for (const npc of state.npcs) if (npc.hp > 0 && !npc.inServiceVehicle && !npc.passengerOf && sameRoom(player, npc) && canSee(state.world,player,npc)) add('npc', npc.id, npc.name, npc, 84);
   for (const event of state.events) if (['open', 'accepted'].includes(event.stage) && !(event.collected && ['dropped_wallet', 'lost_bag'].includes(event.type)) && sameRoom(event, player)) {
     const names = { dropped_wallet: 'A dropped wallet', injury: 'Someone needs help', friend_favor: 'A favour for a friend', restock: 'A stock shortage', wage_dispute: 'An unpaid wage', lost_bag: 'An unattended bag' };
     add('event', event.id, names[event.type], event, 100);
@@ -757,7 +733,7 @@ export function interaction(state, requested) {
   if (target.kind === 'bed') return { title: 'A place to begin again', body: place.id === state.homeId ? 'Sleep until 08:00. Health and stamina recover. Accepted tasks may expire while you rest.' : 'This bed belongs to someone else.', options: [option('sleep', 'Sleep until morning', 'Time passes for everyone', place.id !== state.homeId), option('close', 'Stay awake')] };
   if (target.kind === 'stash') {
     const yours = place.id === state.homeId;
-    return { title: yours ? 'Your cupboard' : 'Someone else’s cupboard', body: yours ? 'Your belongings fit on one shelf. There is room for a better year.' : 'A small envelope is tucked under a stack of shirts. Taking it is theft.', options: [option(yours ? 'home_supplies' : 'steal_stash', yours ? 'Check your old supplies' : 'Take the envelope', yours ? 'One old snack, once' : '₹35 • personal consequences', yours && Boolean(state.worldChanges.homeSupplies)), option('close', 'Close the cupboard')] };
+    return { title: yours ? 'Your cupboard' : 'Someone else’s cupboard', body: yours ? 'Your belongings fit on one shelf. There is room for a better year.' : 'A small envelope is tucked under a stack of shirts. Taking it is theft.', options: [option(yours ? 'home_supplies' : 'steal_stash', yours ? 'Check your old supplies' : 'Take the envelope', yours ? 'One old snack, once' : '$35 • personal consequences', yours && Boolean(state.worldChanges.homeSupplies)), ...(yours?[option('change_outfit','Change shirt','Wearing '+player.outfit)]:[]), option('close', 'Close the cupboard')] };
   }
   return counterInteraction(state, place);
 }
@@ -769,60 +745,64 @@ function npcInteraction(state, npc) {
   const known = npc.disclosures.length ? '\n\n' + npc.backstory : '';
   const body = `${npc.lastQuote ? '“' + npc.lastQuote + '”' : greeting}\n\n${npc.personality}${known}${memories ? '\n\nThey remember: ' + memories : ''}`;
   const options = [option('talk', 'Ask how their day is going', npc.task), option('history', npc.disclosures.length ? 'Talk about what they shared' : 'Ask about their life', npc.trust < 18 ? 'They need to know you better' : 'A personal conversation'), option('hangout', 'Spend some time together', 'Walk nearby for 24 seconds. Available once every few minutes.', npc.trust < 5 || state.elapsed - npc.hangoutAt < 160), option('invite', state.player.companionId === npc.id ? 'Say goodbye for now' : 'Ask them to walk with you', 'A trusted person can keep you company', npc.trust < 12), option('gift', 'Share a snack', 'Uses one snack • one gift per day', state.player.inventory.snack < 1 || state.elapsed - npc.lastGift < 300)];
+  if(pendingStatement(state,npc))options.unshift(option('warn_witness','Threaten the witness','They may refuse or remember this.'));
+  const witnessed=npc.memories.find(m=>m.key.startsWith('street-'));
+  if(witnessed)options.splice(1,0,option('street_memory','What happened here?','Something they were there for'));
+  options.push(option('where_next','Where are you headed?',npc.identity?.occupation||npc.role));
   const quietSetting = state.player.interior && ['home', 'apartment', 'cafe', 'bar'].includes(byId(state, state.player.interior)?.type);
   const sharedCount = npc.sharedPast.length;
   const disclosureReady = sharedCount < 3 && npc.trust >= [30, 50, 70][sharedCount] && state.elapsed - npc.lastDisclosure >= 120 && (quietSetting || state.player.companionId === npc.id) && state.player.heat <= 0;
   if (disclosureReady) options.push(option('share_past', ['Tell them why you came home', 'Tell them what happened at the apprenticeship', 'Tell them what you have been afraid to admit'][sharedCount], 'A private disclosure to this person. You can choose another subject.'));
   if (state.events.some(event => event.npcId === npc.id && event.stage === 'accepted' && event.collected && ['dropped_wallet', 'lost_bag'].includes(event.type))) options.unshift(option('return_found', 'Return their missing property', 'Give the found item back in person'));
   if (['courier', 'driver', 'dispatcher', 'nurse'].includes(npc.role)) options.push(option('ask_delivery', 'Ask about the clinic deliveries', 'An alternate way to investigate'));
-  if (npc.role === 'friend') options.push(option('friend_advice', 'Ask Nikhil what he would do'));
+  if (npc.role === 'friend') options.push(option('friend_advice', 'Ask Miles what he would do'));
   if (npc.role === 'police') options.push(option('surrender', 'Discuss your legal situation'), option('report_story', 'Give a statement about the depot', 'Requires two useful clues', state.story.clues.length < 2 || state.story.resolved));
   if (npc.id === 'npc-1' && npc.trust >= 42) options.push(option('romance', npc.romantic ? 'Talk about the two of you' : 'Ask if this could be a date', 'An invitation, with room to decline'));
   if (npc.trust < 0) options.push(option('apologize', 'Acknowledge what you did', 'Words help once. Actions take longer.'));
   options.push(option('close', 'See you around'));
-  return { title: npc.name, subtitle: `${npc.relation} • ${npc.task} • Trust ${Math.round(npc.trust)}`, body, options };
+  return { title:npc.name, greeting, subtitle: `${npc.relation} • ${npc.task} • Trust ${Math.round(npc.trust)}`, body, options };
 }
 function counterInteraction(state, place) {
   const options = [];
   let body = '';
-  if (state.job?.toId === place.id && ['delivery', 'illicit'].includes(state.job.kind)) options.push(option('complete_delivery', state.job.kind === 'illicit' ? 'Hand over the illicit consignment' : 'Hand over the ordinary delivery', `Earn ₹${state.job.reward}`));
+  if (state.job?.toId === place.id && ['delivery', 'illicit'].includes(state.job.kind)) options.push(option('complete_delivery', state.job.kind === 'illicit' ? 'Hand over the illicit consignment' : 'Hand over the ordinary delivery', `Earn $${state.job.reward}`));
   const promise = state.events.find(event => event.type === 'friend_favor' && event.accepted && event.stage === 'accepted' && event.targetId === place.id);
-  if (promise) options.push(option('collect_favor', 'Collect the screws Nikhil ordered', 'Take them back to him'));
+  if (promise) options.push(option('collect_favor', 'Collect the screws Miles ordered', 'Take them back to him'));
   if (place.type === 'depot') {
-    body = 'The noticeboard offers ordinary stock deliveries. Dev also has a “special handling” parcel. The handwriting on its invoice is trying very hard to look official.';
-    options.push(option('legal_delivery', 'Take an ordinary delivery', '₹65 • a clear destination and a five-minute deadline', Boolean(state.job)));
+    body = 'The noticeboard offers ordinary stock deliveries. Dean also has a “special handling” parcel. The handwriting on its invoice is trying very hard to look official.';
+    options.push(option('legal_delivery', 'Take an ordinary delivery', '$65 • a clear destination and a five-minute deadline', Boolean(state.job)));
     if (!state.story.resolved) {
-      if (!state.story.accepted && !state.story.declined) options.push(option('accept_parcel', 'Accept the special delivery', 'Promised ₹110. You have not been told it is illegal.'), option('decline_parcel', 'Refuse the special delivery', 'Ordinary work remains available'));
+      if (!state.story.accepted && !state.story.declined) options.push(option('accept_parcel', 'Accept the special delivery', 'Promised $110. You have not been told it is illegal.'), option('decline_parcel', 'Refuse the special delivery', 'Ordinary work remains available'));
       if (state.story.parcel) options.push(option('inspect_parcel', 'Inspect the parcel and invoice', 'Find out what you are carrying'), option('return_parcel', 'Return the parcel to the depot', 'You can refuse to deliver it'));
       options.push(option('inspect_manifest', 'Read the loading manifest', 'An accessible evidence route'));
-      if (state.story.phase >= 1) options.push(option('settle_debt', 'Clear your ₹240 arrears with earned money', 'A lawful way out', state.player.cash < state.story.debt), option('illegal_delivery', 'Accept another illicit run', '₹95 • knowing participation', Boolean(state.job)));
-      if (state.story.illegalRuns >= 3) options.push(option('join_partner', 'Take Varun’s partnership offer', 'Resolves the story on his terms'));
+      if (state.story.phase >= 1) options.push(option('settle_debt', 'Clear your $240 arrears with earned money', 'A lawful way out', state.player.cash < state.story.debt), option('illegal_delivery', 'Accept another illicit run', '$95 • knowing participation', Boolean(state.job)));
+      if (state.story.illegalRuns >= 3) options.push(option('join_partner', 'Take Victor’s partnership offer', 'Resolves the story on his terms'));
     }
   } else if (place.type === 'shop') {
-    body = 'Leela points at the price labels. “The sandwich is expensive. The advice is complimentary and often unwanted.”';
-    options.push(option('buy_snack', 'Buy a snack', '₹8 • restores 12 health and stamina', state.player.cash < 8 || state.player.inventory.snack >= 20), option('buy_medkit', 'Buy a first aid kit', '₹28 • restores 45 health', state.player.cash < 28 || state.player.inventory.medkit >= 10), option('shop_help', 'Help with the stock', 'Paid indoor shift • ₹48', Boolean(state.job)));
+    body = 'June points at the price labels. “The sandwich is expensive. The advice is complimentary and often unwanted.”';
+    options.push(option('buy_snack', 'Buy a snack', '$8 • restores 12 health and stamina', state.player.cash < 8 || state.player.inventory.snack >= 20), option('buy_medkit', 'Buy a first aid kit', '$28 • restores 45 health', state.player.cash < 28 || state.player.inventory.medkit >= 10), option('shop_help', 'Help with the stock', 'Paid indoor shift • $48', Boolean(state.job)));
   } else if (place.type === 'cafe' || place.type === 'bar') {
-    body = 'Imran has tea on the stove and a radio that only receives bad news. “Sit down. It sounds better with company.”';
-    options.push(option('tea', 'Have tea and a meal', '₹12 • restore 22 health', state.player.cash < 12), option('cafe_shift', 'Take a washing-up shift', '₹48 • 22 seconds inside', Boolean(state.job)));
+    body = 'Tomas has tea on the stove and a radio that only receives bad news. “Sit down. It sounds better with company.”';
+    options.push(option('tea', 'Have tea and a meal', '$12 • restore 22 health', state.player.cash < 12), option('cafe_shift', 'Take a washing-up shift', '$48 • 22 seconds inside', Boolean(state.job)));
   } else if (place.type === 'clinic') {
     body = 'Treatment first, paperwork second. That order is written on a sign because somebody once tried the opposite.';
-    options.push(option('treatment', state.player.cash < 20 ? 'Ask for basic triage' : 'Get treatment', state.player.cash < 20 ? 'Free • recover to at least 50 health' : '₹20 • full health', state.player.hp >= 100), option('clinic_records', 'Ask about the missing supplies', 'A public inventory discrepancy'));
+    options.push(option('treatment', state.player.cash < 20 ? 'Ask for basic triage' : 'Get treatment', state.player.cash < 20 ? 'Free • recover to at least 50 health' : '$20 • full health', state.player.hp >= 100), option('clinic_records', 'Ask about the missing supplies', 'A public inventory discrepancy'));
     if (state.story.parcel) options.push(option('deliver_parcel', 'Hand over the clinic parcel', state.story.parcelInspected ? 'Return stolen supplies to the people who need them' : 'Complete the job before you understand it'));
   } else if (place.type === 'office') {
     body = 'The temporary-work sheet has room for one more name. The motivational poster says “YOU ARE REPLACEABLE” with a coffee stain over the last word.';
-    options.push(option('office_shift', 'Take a filing shift', '₹48 • 22 seconds inside', Boolean(state.job)));
+    options.push(option('office_shift', 'Take a filing shift', '$48 • 22 seconds inside', Boolean(state.job)));
   } else if (place.type === 'garage') {
-    body = 'Rafi can offer repair work. Your old car can be patched up and filled here, too.';
-    options.push(option('garage_shift', 'Take a repair shift', '₹48 • 22 seconds inside', Boolean(state.job)), option('repair_car', 'Repair and refuel your car', '₹25 • works even if the car was left elsewhere', state.player.cash < 25));
+    body = 'Samir can offer repair work. Your old car can be patched up and filled here, too.';
+    options.push(option('garage_shift', 'Take a repair shift', '$48 • 22 seconds inside', Boolean(state.job)), option('repair_car', 'Repair and refuel your car', '$25 • works even if the car was left elsewhere', state.player.cash < 25));
   } else if (place.type === 'police') {
     body = 'A laminated sign reads PLEASE TAKE A NUMBER. Nobody remembers where the number machine went.';
     options.push(option('surrender', 'Settle your current case', 'Pay an affordable fine. Confiscated weapons are not returned.'), option('report_story', 'Submit the delivery evidence', 'Two clues let the story resolve through a formal report', state.story.clues.length < 2 || state.story.resolved));
   } else if (place.type === 'pawn') {
     body = '“Everything has a previous owner,” says the sign. The clerk is vague about which previous owners have agreed to this.';
-    options.push(option('buy_pistol', 'Buy a second-hand pistol', '₹145 • possession alone creates no pursuit', state.player.cash < 145 || state.player.inventory.pistol > 0), option('buy_ammo', 'Buy twelve rounds', '₹24', state.player.cash < 24 || state.player.inventory.ammo > 188), option('sell_snack', 'Sell a spare snack', '+₹4', state.player.inventory.snack < 1));
+    options.push(option('buy_pistol', 'Buy a second-hand pistol', '$145 • possession alone creates no pursuit', state.player.cash < 145 || state.player.inventory.pistol > 0), option('buy_ammo', 'Buy twelve rounds', '$24', state.player.cash < 24 || state.player.inventory.ammo > 188), option('sell_snack', 'Sell a spare snack', '+$4', state.player.inventory.snack < 1));
   } else {
     body = 'The table holds rent notices, old photographs and a half-finished list of things to fix.';
-    if (place.id === state.homeId) options.push(option('settle_debt', 'Pay off your rent arrears', `₹${state.story.debt} • an independent ending`, state.story.resolved || state.player.cash < state.story.debt), option('home_history', 'Look at the old photograph', 'Your history is fixed, even when your choices change'));
+    if (place.id === state.homeId) options.push(option('settle_debt', 'Pay off your rent arrears', `$${state.story.debt} • an independent ending`, state.story.resolved || state.player.cash < state.story.debt), option('home_history', 'Look at the old photograph', 'Your history is fixed, even when your choices change'));
   }
   if (state.job) options.push(option('cancel_job', 'Cancel your accepted job', 'No payment for unfinished work'));
   options.push(option('close', 'Step away'));
@@ -833,12 +813,12 @@ function eventInteraction(state, event) {
   event.known = true;
   const npc = npcById(state, event.npcId);
   const descriptions = {
-    dropped_wallet: [`${npc.name} dropped a wallet`, 'A bus pass, a family photograph and ₹25. The photograph has been folded and unfolded for years.', [option('event_return', 'Return it to its owner', 'They remember the help'), option('event_keep', 'Keep the money', 'Theft if witnessed'), option('close', 'Leave it where it is')]],
+    dropped_wallet: [`${npc.name} dropped a wallet`, 'A bus pass, a family photograph and $25. The photograph has been folded and unfolded for years.', [option('event_return', 'Return it to its owner', 'They remember the help'), option('event_keep', 'Keep the money', 'Theft if witnessed'), option('close', 'Leave it where it is')]],
     injury: [`${npc.name} needs help`, 'A hand caught on a loose metal shutter. They are trying to make it look less painful than it is.', [option('event_medkit', 'Use a first aid kit', 'A real cost, a real favour', state.player.inventory.medkit < 1), option('event_call', 'Call the clinic', 'Help arrives without using an item'), option('event_rob', 'Take the loose wage envelope', 'A harmful choice people can witness'), option('close', 'Keep walking')]],
-    friend_favor: ['A small promise', event.collected ? 'You have Nikhil’s packet of screws. Hand them over before he starts his shift.' : 'Nikhil needs a packet of screws from the shop. He promises this is the last “quick favour”, which you have both heard before.', [option(event.collected ? 'event_finish_favor' : 'event_accept_favor', event.collected ? 'Hand over the screws' : event.accepted ? 'Keep the promise in mind' : 'Promise to collect them', 'A named commitment with a deadline', event.accepted && !event.collected), option('close', event.accepted ? 'I will be back' : 'I cannot promise today')]],
-    restock: ['A stock shortage', 'A shop delivery has gone astray. Helping with a quick stock count would get things moving again.', [option('event_restock', 'Help count the remaining stock', '+₹18 • advances 15 game minutes'), option('close', 'Maybe another time')]],
-    wage_dispute: ['An unpaid wage', 'Kavya’s dispatch slip says PAID. Her bank account has a less imaginative opinion. She kept a copy of the manifest.', [option('event_wage', 'Read the slip and help file a claim', 'Useful evidence and a grateful courier'), option('event_pay', 'Cover the missing ₹25 yourself', 'A personal favour', state.player.cash < 25), option('close', 'Leave the argument alone')]],
-    lost_bag: ['An unattended bag', 'A tool bag sits beside the pavement. The name on the inside tag should help you find its owner.', [option('event_return_bag', 'Find its owner and return it', 'A repair contact remembers'), option('event_keep', 'Sell the contents for ₹30', 'Theft if witnessed'), option('close', 'Leave it alone')]]
+    friend_favor: ['A small promise', event.collected ? 'You have Miles’s packet of screws. Hand them over before he starts his shift.' : 'Miles needs a packet of screws from the shop. He promises this is the last “quick favour”, which you have both heard before.', [option(event.collected ? 'event_finish_favor' : 'event_accept_favor', event.collected ? 'Hand over the screws' : event.accepted ? 'Keep the promise in mind' : 'Promise to collect them', 'A named commitment with a deadline', event.accepted && !event.collected), option('close', event.accepted ? 'I will be back' : 'I cannot promise today')]],
+    restock: ['A stock shortage', 'A shop delivery has gone astray. Helping with a quick stock count would get things moving again.', [option('event_restock', 'Help count the remaining stock', '+$18 • advances 15 game minutes'), option('close', 'Maybe another time')]],
+    wage_dispute: ['An unpaid wage', 'Elena’s dispatch slip says PAID. Her bank account has a less imaginative opinion. She kept a copy of the manifest.', [option('event_wage', 'Read the slip and help file a claim', 'Useful evidence and a grateful courier'), option('event_pay', 'Cover the missing $25 yourself', 'A personal favour', state.player.cash < 25), option('close', 'Leave the argument alone')]],
+    lost_bag: ['An unattended bag', 'A tool bag sits beside the pavement. The name on the inside tag should help you find its owner.', [option('event_return_bag', 'Find its owner and return it', 'A repair contact remembers'), option('event_keep', 'Sell the contents for $30', 'Theft if witnessed'), option('close', 'Leave it alone')]]
   };
   const [title, body, options] = descriptions[event.type];
   return { title, subtitle: event.accepted ? 'You made a promise' : 'A local situation', body, options };
@@ -858,8 +838,8 @@ function buy(state, key, cost, amount = 1) {
   if (state.player.cash < cost || state.player.inventory[key] + amount > limit) return false;
   state.player.cash -= cost;
   state.player.inventory[key] += amount;
-  log(state, `Bought ${amount} ${key}${amount > 1 ? 's' : ''} for ₹${cost}.`);
-  pushMessage(state, `${key === 'ammo' ? amount + ' rounds' : key} added • −₹${cost}`, 'good');
+  log(state, `Bought ${amount} ${key}${amount > 1 ? 's' : ''} for $${cost}.`);
+  pushMessage(state, `${key === 'ammo' ? amount + ' rounds' : key} added • −$${cost}`, 'good');
   return true;
 }
 function setQuote(state, npc, text) {
@@ -952,7 +932,7 @@ export function act(state, actionId, targetId = null) {
       if (vehicle.health <= 0) { pushMessage(state, 'The car needs a repair before it can run.', 'warn'); break; }
       if (vehicle.ownerId !== 'player' && !vehicle.stolen) {
         vehicle.stolen = true;
-        crime(state, 'vehicle theft', 2, vehicle.ownerId);
+        crime(state, 'vehicle theft', 2, vehicle.ownerId, vehicle.id);
       }
       player.vehicleId = vehicle.id;
       Object.assign(player, { x: vehicle.x, y: vehicle.y, interior: null });
@@ -981,7 +961,7 @@ export function act(state, actionId, targetId = null) {
       pushMessage(state, 'A new morning • health and stamina restored', 'good');
       break;
     case 'home_history':
-      log(state, 'An old photograph. A classroom fan, two kids holding a screwdriver, Nikhil trying to look as if he knows what he is doing. You remember more than you feel like explaining today.');
+      log(state, 'An old photograph. A classroom fan, two kids holding a screwdriver, Miles trying to look as if he knows what he is doing. You remember more than you feel like explaining today.');
       pushMessage(state, 'Your history is in the journal.', 'story');
       break;
     case 'home_supplies':
@@ -992,7 +972,7 @@ export function act(state, actionId, targetId = null) {
         state.worldChanges[targetId + '-stash'] = true;
         player.cash += 35;
         crime(state, 'theft from a home', 2, state.npcs.find(item => item.homeId === targetId)?.id);
-        log(state, 'Took ₹35 from a private cupboard. The missing envelope will be noticed.');
+        log(state, 'Took $35 from a private cupboard. The missing envelope will be noticed.');
       } else pushMessage(state, 'The cupboard is empty.', 'muted');
       break;
     case 'legal_delivery': startJob(state, 'delivery', place); break;
@@ -1003,13 +983,13 @@ export function act(state, actionId, targetId = null) {
       state.story.accepted = true;
       state.story.parcel = true;
       state.story.phase = 1;
-      log(state, 'Accepted a special clinic delivery. Dev called it routine stock. You have not knowingly agreed to theft. You can inspect, return, or hand it over.');
+      log(state, 'Accepted a special clinic delivery. Dean called it routine stock. You have not knowingly agreed to theft. You can inspect, return, or hand it over.');
       pushMessage(state, 'Parcel collected. The clinic is marked on your map. You can inspect it at the depot.', 'story');
       break;
     case 'decline_parcel':
       state.story.declined = true;
       state.story.phase = 1;
-      log(state, 'Refused Dev’s special parcel. Ordinary deliveries and shifts remain available. Rent arrears can be cleared with earned money.');
+      log(state, 'Refused Dean’s special parcel. Ordinary deliveries and shifts remain available. Rent arrears can be cleared with earned money.');
       pushMessage(state, 'You declined. Your time is still yours.', 'good');
       break;
     case 'inspect_parcel':
@@ -1018,7 +998,7 @@ export function act(state, actionId, targetId = null) {
       clue(state, 'parcel', 'The supposedly new stock carries a clinic property stamp and a scraped-off serial number. Someone is billing the clinic for its own supplies.');
       break;
     case 'inspect_manifest':
-      clue(state, 'manifest', 'The depot manifest lists the same clinic supplies twice, under different drivers. Dev signed both entries.');
+      clue(state, 'manifest', 'The depot manifest lists the same clinic supplies twice, under different drivers. Dean signed both entries.');
       state.story.phase = Math.max(2, state.story.phase);
       break;
     case 'return_parcel':
@@ -1026,7 +1006,7 @@ export function act(state, actionId, targetId = null) {
       state.story.declined = true;
       state.story.phase = 2;
       remember(state, state.npcs[5], 'parcel-return', 'You returned the parcel and refused to carry it further.', -4);
-      log(state, 'Returned the parcel. Dev says you are making a simple job complicated. Legal work, records, and the clinic offer other routes forward.');
+      log(state, 'Returned the parcel. Dean says you are making a simple job complicated. Legal work, records, and the clinic offer other routes forward.');
       pushMessage(state, 'Parcel returned. You can investigate or earn your way clear.', 'story');
       break;
     case 'deliver_parcel':
@@ -1037,12 +1017,12 @@ export function act(state, actionId, targetId = null) {
         if (state.story.parcelInspected) {
           player.honor = clamp(player.honor + 10, -100, 100);
           remember(state, state.npcs[4], 'returned-supplies', 'You returned the clinic’s missing supplies.', 14);
-          clue(state, 'clinic', 'Sana confirmed the supplies were already clinic property. The copied invoice can support a report.');
-          log(state, 'Returned the supplies to the clinic. Dev’s promised fee never arrives.');
+          clue(state, 'clinic', 'Grace confirmed the supplies were already clinic property. The copied invoice can support a report.');
+          log(state, 'Returned the supplies to the clinic. Dean’s promised fee never arrives.');
         } else {
           player.cash += 110;
-          clue(state, 'clinic', 'The nurse recognises the delivered supplies as the clinic’s own missing stock. You now know Dev misrepresented the job.');
-          log(state, 'Completed the first parcel delivery before learning it was a scam. Paid ₹110. Future work from Varun would be a knowing choice.');
+          clue(state, 'clinic', 'The nurse recognises the delivered supplies as the clinic’s own missing stock. You now know Dean misrepresented the job.');
+          log(state, 'Completed the first parcel delivery before learning it was a scam. Paid $110. Future work from Victor would be a knowing choice.');
         }
       }
       break;
@@ -1068,7 +1048,7 @@ export function act(state, actionId, targetId = null) {
         player.cash += 80;
         player.investigation = Math.max(0, player.investigation - 25);
         remember(state, state.npcs[10], 'story-report', 'You brought a useful paper trail about the depot.', 15);
-        log(state, 'Received an ₹80 witness-expense payment. Unrelated incidents still have their own case records.');
+        log(state, 'Received an $80 witness-expense payment. Unrelated incidents still have their own case records.');
       }
       break;
     case 'clinic_records': clue(state, 'clinic', 'The clinic’s public inventory lists a missing batch matching the depot consignment. A police report needs another source.'); break;
@@ -1077,13 +1057,13 @@ export function act(state, actionId, targetId = null) {
     case 'buy_ammo': buy(state, 'ammo', 24, 12); break;
     case 'buy_pistol': if (buy(state, 'pistol', 145)) { player.equipped = false; player.inventory.ammo += 6; player.magazine = 6; } break;
     case 'sell_snack':
-      if (player.inventory.snack > 0) { player.inventory.snack--; player.cash += 4; log(state, 'Sold a spare snack for ₹4.'); pushMessage(state, '+₹4', 'good'); }
+      if (player.inventory.snack > 0) { player.inventory.snack--; player.cash += 4; log(state, 'Sold a spare snack for $4.'); pushMessage(state, '+$4', 'good'); }
       break;
     case 'tea':
       if (player.cash >= 12) { player.cash -= 12; player.hp = Math.min(100, player.hp + 22); player.stamina = 100; log(state, 'Had a hot meal at the cafe.'); pushMessage(state, 'Warm food • +22 health', 'good'); }
       break;
     case 'treatment':
-      if (player.cash >= 20) { player.cash -= 20; player.hp = 100; log(state, 'Paid ₹20 for full clinic treatment.'); }
+      if (player.cash >= 20) { player.cash -= 20; player.hp = 100; log(state, 'Paid $20 for full clinic treatment.'); }
       else { player.hp = Math.max(player.hp, 50); log(state, 'Received free basic triage.'); }
       pushMessage(state, 'The nurse asks you to keep the bandage dry.', 'good');
       break;
@@ -1093,12 +1073,28 @@ export function act(state, actionId, targetId = null) {
         const parking = openPosition(state.world, { x: place.door.x + 62, y: place.door.y + 35 }, 23);
         player.cash -= 25;
         Object.assign(car, parking, { health: 100, fuel: 100, speed: 0, parked: true });
-        log(state, 'Paid ₹25. Rafi recovered, repaired and refuelled your car.');
+        log(state, 'Paid $25. Samir recovered, repaired and refuelled your car.');
         pushMessage(state, 'Your car is ready outside.', 'good');
       }
       break;
     }
     case 'surrender': if (player.heat > 0 || player.investigation > 0) arrest(state); else pushMessage(state, 'There is no active case against you.', 'muted'); break;
+    case 'change_outfit':
+      player.outfit=outfits[(outfits.indexOf(player.outfit)+1)%outfits.length];
+      pushMessage(state,'Changed into your '+player.outfit+' shirt.','info');break;
+    case 'warn_witness':return setQuote(state,npc,warnWitness(state,npc,remember));
+    case 'street_memory':
+      return setQuote(state,npc,npc.memories.find(m=>m.key.startsWith('street-'))?.text||'I missed it.');
+    case 'where_next': {
+      const work=byId(state,npc.workId);
+      const off=byId(state,npc.homeId);
+      if(npc.ambientBusy)return setQuote(state,npc,'Give me a minute. There’s something going on here.');
+      if(npc.id===player.companionId)return setQuote(state,npc,'I’ve got a bit of time. Where are we going?');
+      const time=formatTime(npc.identity.shiftStart);
+      return setQuote(state,npc,state.time<npc.identity.shiftStart?'I start at '+work.name+' at '+time+'. I can make it if I leave soon.':
+        state.time<npc.identity.shiftEnd?'My shift at '+work.name+' finishes at '+formatTime(npc.identity.shiftEnd)+'. Come find me then.':
+        'Home to '+off.name+'. That’s plenty for one day.');
+    }
     case 'talk':
       npc.introduced = true;
       if (npc.relation === 'stranger') npc.relation = 'neighbour';
@@ -1106,12 +1102,17 @@ export function act(state, actionId, targetId = null) {
         npc.lastTalk = state.elapsed;
         npc.trust = clamp(npc.trust + 3, -100, 100);
       }
-      if (npc.role === 'friend') {
+      if (npc.role === 'friend' && !state.story.welcomed) {
         state.story.welcomed = true;
         remember(state, npc, 'welcome', 'You came home and made time to talk.', 0);
         return setQuote(state, npc, 'You can take a wrong turn without moving there permanently. Start with one paid shift. Eat something. Then decide whose advice costs too much.');
       }
-      return setQuote(state, npc, npc.trust < -15 ? 'I heard the apology. I need to see what happens next.' : `I’m ${npc.task}. ${['Rent is due even on the days nothing interesting happens.', 'The cafe is still open. That counts as good news.', 'A little ordinary work beats an exciting explanation to the police.', 'I hope tomorrow is boring in a useful way.'][Number(npc.id.slice(4)) % 4]}`);
+      if(npc.trust < -15)return setQuote(state,npc,'I remember last time. Let’s give it a day.');
+      if(npc.ambientBusy)return setQuote(state,npc,'One second. I’m in the middle of something.');
+      if(npc.hp<60)return setQuote(state,npc,'Honestly? Still sore. I’m taking it slow today.');
+      if(npc.role==='friend'&&state.story.resolved)return setQuote(state,npc,'Look at you. First morning back you were counting coins for rent. Coffee’s on me today.');
+      if(npc.role==='friend')return setQuote(state,npc,player.hp<65?'Sit down for a second, Alex. You look like you could use the clinic.':'Those dock lights tripped again. Guess whose shift starts as soon as the sun goes down.');
+      return setQuote(state,npc,localConversation[Number(npc.id.slice(4))]);
     case 'history':
       if (npc.trust >= 18) {
         if (!npc.disclosures.includes('past')) { npc.disclosures.push('past'); log(state, `${npc.name} told you privately: ${npc.backstory}`); }
@@ -1137,7 +1138,7 @@ export function act(state, actionId, targetId = null) {
     case 'friend_advice':
       if (!npc.memories.some(item => item.key === 'delivery-advice')) {
         remember(state, npc, 'delivery-advice', 'You asked for advice about the depot.', 0);
-        log(state, 'Nikhil suggests checking clinic records and the depot manifest. Advice is a lead, rather than evidence.');
+        log(state, 'Miles suggests checking clinic records and the depot manifest. Advice is a lead, rather than evidence.');
       }
       return setQuote(state, npc, 'Get the facts before you get the blame. The clinic keeps records. So does the depot, although theirs are more creative.');
     case 'ask_delivery':
@@ -1172,7 +1173,7 @@ export function act(state, actionId, targetId = null) {
         npc.romanceAsked = true;
         npc.romantic = npc.trust >= 55 && player.honor >= 0 && npc.memories.some(item => item.key.startsWith('hangout'));
         npc.relation = npc.romantic ? 'dating' : 'friend';
-        log(state, npc.romantic ? 'Kavya accepted a date. It is a relationship to keep making time for.' : 'Kavya said she would prefer to stay friends. You respected her answer.');
+        log(state, npc.romantic ? 'Elena accepted a date. It is a relationship to keep making time for.' : 'Elena said she would prefer to stay friends. You respected her answer.');
       }
       return setQuote(state, npc, npc.romantic ? 'Yes. A real date. Somewhere without dispatch slips.' : 'I like talking with you. I would rather keep this as a friendship.');
     case 'event_return': case 'event_return_bag':
@@ -1214,21 +1215,21 @@ export function act(state, actionId, targetId = null) {
     case 'event_accept_favor':
       event.accepted = true;
       event.stage = 'accepted';
-      log(state, 'Promised Nikhil you would collect his screws from the shop. Return before the promise expires.');
+      log(state, 'Promised Miles you would collect his screws from the shop. Return before the promise expires.');
       pushMessage(state, 'Promise accepted. The shop is marked on your map.', 'story');
       break;
     case 'collect_favor': {
       const favor = state.events.find(item => item.type === 'friend_favor' && item.stage === 'accepted' && item.targetId === targetId);
-      if (favor) { favor.collected = true; log(state, 'Collected Nikhil’s screws. Take them back to him.'); pushMessage(state, 'Screws collected. Find Nikhil.', 'good'); }
+      if (favor) { favor.collected = true; log(state, 'Collected Miles’s screws. Take them back to him.'); pushMessage(state, 'Screws collected. Find Miles.', 'good'); }
       break;
     }
-    case 'event_finish_favor': resolveEvent(state, event, 'You kept your promise and brought Nikhil’s screws before his shift.', 12, 5); player.cash += 12; break;
+    case 'event_finish_favor': resolveEvent(state, event, 'You kept your promise and brought Miles’s screws before his shift.', 12, 5); player.cash += 12; break;
     case 'event_restock': changeTime(state, 15); player.cash += 18; resolveEvent(state, event, 'You helped with the stock count. The shop can reopen its delivery counter.', 7, 3); break;
     case 'event_wage':
-      clue(state, 'wage-slip', 'Kavya’s unpaid slip names the same clinic batch as the depot manifest. She kept a signed copy.');
-      resolveEvent(state, event, 'You helped Kavya file a claim for her missing wages.', 10, 5);
+      clue(state, 'wage-slip', 'Elena’s unpaid slip names the same clinic batch as the depot manifest. She kept a signed copy.');
+      resolveEvent(state, event, 'You helped Elena file a claim for her missing wages.', 10, 5);
       break;
-    case 'event_pay': if (player.cash >= 25) { player.cash -= 25; resolveEvent(state, event, 'You covered Kavya’s missing wages without asking for a favour in return.', 14, 5); } break;
+    case 'event_pay': if (player.cash >= 25) { player.cash -= 25; resolveEvent(state, event, 'You covered Elena’s missing wages without asking for a favour in return.', 14, 5); } break;
     default: pushMessage(state, 'That action is unavailable.', 'muted'); return { close: false };
   }
   state.dirty = true;
@@ -1254,7 +1255,7 @@ export function objective(state) {
     const person = npcById(state, promise.npcId);
     const place = byId(state, promise.targetId);
     if (promise.collected) return finish(`Promise • bring the screws back to ${person.name}.`, { x: person.x, y: person.y, interior: person.interior });
-    return finish(`Promise • collect Nikhil’s screws from ${place.name}.`, player.interior === place.id ? { ...place.room.spots.counter, interior: place.id } : place.door);
+    return finish(`Promise • collect Miles’s screws from ${place.name}.`, player.interior === place.id ? { ...place.room.spots.counter, interior: place.id } : place.door);
   }
   if (state.story.resolved) return finish('Free play • work, explore, build relationships and keep making a life.');
   if (state.story.phase === 0) {
@@ -1264,7 +1265,7 @@ export function objective(state) {
       return finish('Dispatch offer • visit the depot counter to hear about the delivery, or find work on your own.', target);
     }
     const friend = state.npcs[0];
-    return finish('Welcome home • talk to Nikhil, or investigate the depot’s delivery offer.', { x: friend.x, y: friend.y, interior: friend.interior });
+    return finish('Welcome home • talk to Miles, or investigate the depot’s delivery offer.', { x: friend.x, y: friend.y, interior: friend.interior });
   }
   if (state.story.parcel) {
     const place = building(state, 'clinic');
@@ -1272,9 +1273,9 @@ export function objective(state) {
   }
   if (state.story.clues.length >= 2) {
     const place = building(state, 'police');
-    return finish('Your next move • report the evidence, clear ₹240 arrears through work, or accept Varun’s terms.', player.interior === place.id ? { ...place.room.spots.counter, interior: place.id } : place.door);
+    return finish('Your next move • report the evidence, clear $240 arrears through work, or accept Victor’s terms.', player.interior === place.id ? { ...place.room.spots.counter, interior: place.id } : place.door);
   }
-  return finish('A way forward • inspect depot records, speak to a courier, or earn enough to clear ₹240 arrears.', building(state, 'depot').door);
+  return finish('A way forward • inspect depot records, speak to a courier, or earn enough to clear $240 arrears.', building(state, 'depot').door);
 }
 
 export function toSave(state) {
@@ -1283,6 +1284,7 @@ export function toSave(state) {
 }
 
 export function fromSave(data) {
+  if(data?.version===1)data=migrateIslandSave(data);
   if (!data || typeof data !== 'object' || data.version !== VERSION || !['string', 'number'].includes(typeof data.seed)) throw new Error('This save is not compatible with this game.');
   const state = createGame(String(data.seed).slice(0, 120));
   const safeNumber = (value, fallback, low, high) => clamp(finite(value, fallback), low, high);
@@ -1299,6 +1301,8 @@ export function fromSave(data) {
   player.x = safeNumber(savedPlayer.x, player.x, player.interior ? 38 : 72, area.width - (player.interior ? 38 : 72));
   player.y = safeNumber(savedPlayer.y, player.y, player.interior ? 48 : 72, area.height - (player.interior ? 32 : 72));
   for (const [key, low, high] of [['hp', 1, 100], ['cash', 0, 1e7], ['stamina', 0, 100], ['honor', -100, 100], ['heat', 0, 100], ['investigation', 0, 100], ['angle', -1e4, 1e4]]) player[key] = safeNumber(savedPlayer[key], player[key], low, high);
+  player.outfit=outfits.includes(savedPlayer.outfit)?savedPlayer.outfit:'denim';
+  player.searchUntil=safeNumber(savedPlayer.searchUntil,0,0,state.elapsed+100);
   player.identified = Boolean(savedPlayer.identified);
   player.magazine = Math.floor(safeNumber(savedPlayer.magazine, Math.min(6, finite(savedPlayer.inventory?.ammo)), 0, 6));
   player.lastCrime = safeNumber(savedPlayer.lastCrime, -1000, -1000, state.elapsed);
@@ -1392,6 +1396,8 @@ export function fromSave(data) {
     vehicle.y = state.world.roads.horizontal[0] + 100 + Number(vehicle.id.slice(4)) * 55;
   }
   if (player.vehicleId) { const car = state.vehicles.find(item => item.id === player.vehicleId); player.x = car.x; player.y = car.y; }
+  restoreStatements(state,Array.isArray(data.cases)?data.cases:[]);
+  restoreLife(state,data);
   pushMessage(state, 'Your block, just where you left it.', 'good');
   state.dirty = false;
   return state;

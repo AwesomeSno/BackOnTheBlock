@@ -35,12 +35,12 @@ function palm(c,x,y,s,lean,seed,backlit=false) {
     const point=t=>[topX+dx*t,topY+dy*t-Math.sin(Math.PI*t)*lift];
     const stem=Array.from({length:8},(_,j)=>point(j/7));
     stroke(c,stem,color,1.5*s);
-    for(let f=1;f<=15;f++){
-      const t=f/17, p=point(t), q=point(Math.min(1,t+.09));
-      const length=(Math.sin(Math.PI*t)*11+1)*s;
+    for(let f=1;f<=16;f++){
+      const t=f/18,p=point(t),q=point(Math.min(1,t+.075)),norm=Math.max(1,Math.hypot(q[0]-p[0],q[1]-p[1]));
+      const tx=(q[0]-p[0])/norm,ty=(q[1]-p[1])/norm;
+      const length=(Math.sin(Math.PI*t)*8+.6)*s;
       for(const side of [-1,1]){
-        const sign=dx>=0?1:-1;
-        const leaf=[p[0]+sign*length*(.25+.22*side),p[1]+length*(1.06+.45*side)];
+        const leaf=[p[0]+(tx*.6-ty*side)*length,p[1]+(ty*.6+tx*side*.48+.40)*length];
         path(c,[p,leaf,q],color);
       }
     }
