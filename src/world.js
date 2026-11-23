@@ -1,4 +1,4 @@
-// City generation and navigation use one seed. Rendering never changes this stream.
+// Incident randomness is independent of the fixed island geography.
 export function hashSeed(seed) {
   let hash = 2166136261;
   for (const char of String(seed)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
@@ -56,7 +56,7 @@ function makeRoom(type,roll) {
   room.wallColor=['#c9c3ad','#bdc2b0','#c9b6a7'][Math.floor(roll()*3)];
   return room;
 }
-export function generateWorld(seed='second-chance') {
+export function legacyWorld(seed) {
   const rng={rngState:hashSeed(seed)};
   const roll=()=>random(rng);
   const roads=[128,748+Math.floor(roll()*40),1388+Math.floor(roll()*40),2028+Math.floor(roll()*40),2688];
@@ -93,6 +93,78 @@ export function generateWorld(seed='second-chance') {
   world.start=buildingByType(world,'home').door;
   return world;
 }
+// Rows run north to south. Each four-lot block lists NW, NE, SW and SE.
+const blocks = [
+  ['apartment','cafe','park','apartment'], ['shop','clinic','apartment','office'], ['office','bar','apartment','park'], ['apartment','cafe','park','shop'],
+  ['apartment','shop','park','apartment'], ['home','cafe','park','apartment'], ['depot','garage','office','apartment'], ['apartment','bar','park','shop'],
+  ['apartment','garage','park','shop'], ['apartment','apartment','office','pawn'], ['office','annex','shop','apartment'], ['cafe','apartment','park','bar'],
+  ['police','apartment','shop','park'], ['apartment','shop','cafe','apartment'], ['depot','office','park','apartment'], ['garage','cafe','apartment','park']
+];
+const localNames = {
+  home:['Bennett Rooms'], cafe:['Café Marisol','Blue Hour Coffee','Dawn Patrol Diner','Las Olas Café'],
+  apartment:['Sea Grape Court','Caribe Flats','Meridian House','Magnolia Terrace','The Palms','Bluebird Court','Mariner House','West Bay Flats'],
+  clinic:['St Anne Medical'], police:['Bellport Precinct'], bar:['The Slipway','Luna Social','The Low Tide'],
+  garage:['Kingfisher Motors','South Quay Garage','Pelican Auto'], shop:['Harbour Provisions','Coral Market','Plaza Records','Bay Hardware','Luna Bakery','West Pier Books'],
+  depot:['Meridian Dispatch','Lucero Freight'], office:['Port Exchange','Marina Finance','Lucero Mutual','Coral Tower','Meridian Centre','Signal House'],
+  pawn:['Anchor Exchange']
+};
+export function generateWorld() {
+  const roads=[128,768,1408,2048,2688];
+  const world={name:'Port Lucero',seed:'port-lucero',width:3264,height:2816,roads:{vertical:roads,horizontal:[...roads],width:92},
+    water:{edge:1,shoreX:2792},districts:['Bellport','North Marina','Coral Hill','South Quay'],buildings:[],parks:[],decorations:[],solids:[]};
+  const counts={};
+  for (const [block, lots] of blocks.entries()) for (const [slot,type] of lots.entries()) {
+    if(type==='annex')continue;
+    const serial=4*block+slot,row=Math.floor(block/4),col=block%4;
+    const id='b'+serial, rng={rngState:hashSeed(id+'-pl')},roll=()=>random(rng);
+    const x=roads[col]+100+(slot%2)*254+Math.floor(roll()*14);
+    const y=roads[row]+108+Math.floor(slot/2)*251+Math.floor(roll()*14);
+    if(type==='park') {
+      const plants=[[25,42],[168,35],[32,158],[170,170]].map(([dx,dy],i)=>({x:x+dx,y:y+dy,kind:(i+block)%3?'palm':'broadleaf'}));
+      world.parks.push({id:'park-'+serial,x,y,w:208,h:207,trees:plants.length,plants});
+      for(const plant of plants)world.solids.push({x:plant.x-4,y:plant.y-3,w:8,h:7});
+      continue;
+    }
+    const n=counts[type]||0;counts[type]=n+1;
+    const w=serial===40?434:175+Math.floor(roll()*27),h=137+Math.floor(roll()*35);
+    const floors=serial===40?14:type==='office'?5+(serial%5):type==='apartment'?2+(serial%4):type==='home'?3:type==='clinic'?4:1+(serial%2);
+    const titles=localNames[type];
+    const name=titles[n%titles.length]+(n>=titles.length?' '+(Math.floor(n/titles.length)+1):'');
+    const b={id,type,name,x,y,w,h,door:{x:x+w/2,y:y+h+18},floors,
+      district:world.districts[(row>=2?2:0)+(col>=2?1:0)],ownerId:null,
+      color:['#de8569','#efd39b','#79bbba','#86a8c2','#d9a194'][serial%5],accent:['#fff0c7','#b8d9ef','#eb774f'][serial%3],
+      variant:serial%4,room:makeRoom(type,roll)};
+    world.buildings.push(b);world.solids.push({x,y,w,h});
+    const furnishing=type==='garage'||type==='depot'?'bin':'bench';
+    for(const [kind,dx] of [[furnishing,22],['lamp',w-14]]) {
+      const footX=x+dx,footY=y+h+33;
+      world.decorations.push({kind,x:footX,y:footY,variant:serial%4});
+      const half=kind==='bench'?14:kind==='bin'?6:3;
+      world.solids.push({x:footX-half,y:footY-4,w:2*half,h:8});
+    }
+  }
+  world.start=buildingByType(world,'home').door;
+  return world;
+}
+const solidBins = new WeakMap();
+function nearbySolids(world,x,y,r) {
+  let bins=solidBins.get(world);
+  if(!bins) {
+    bins=new Map();
+    for(const s of world.solids||world.buildings) {
+      for(let a=Math.floor(s.x/128);a<=Math.floor((s.x+s.w)/128);a++)
+        for(let b=Math.floor(s.y/128);b<=Math.floor((s.y+s.h)/128);b++){
+          const key=a+b*64;if(!bins.has(key))bins.set(key,[]);bins.get(key).push(s);
+        }
+    }
+    solidBins.set(world,bins);
+  }
+  const ax=Math.floor((x-r)/128),ay=Math.floor((y-r)/128),bx=Math.floor((x+r)/128),by=Math.floor((y+r)/128);
+  if(ax===bx&&ay===by)return bins.get(ax+ay*64)||[];
+  const result=[];
+  for(let a=ax;a<=bx;a++)for(let b=ay;b<=by;b++)result.push(...(bins.get(a+b*64)||[]));
+  return result;
+}
 export function isWalkable(world,x,y,radius=10,interior=null) {
   if(interior) {
     const room=world.buildings.find(b=>b.id===interior)?.room;
@@ -100,8 +172,8 @@ export function isWalkable(world,x,y,radius=10,interior=null) {
     if(x<26+radius||y<35+radius||x>room.width-26-radius||y>room.height-18-radius)return false;
     return !room.furniture.some(item=>inside(x,y,radius,item));
   }
-  if(x<60+radius||y<60+radius||x>world.width-60-radius||y>world.height-60-radius)return false;
-  return !world.buildings.some(building=>inside(x,y,radius,building));
+  if(x<60+radius||y<60+radius||x>(world.water?.shoreX??world.width-60)-radius||y>world.height-60-radius)return false;
+  return !nearbySolids(world,x,y,radius).some(s=>inside(x,y,radius,s));
 }
 export function moveActor(world,actor,dx,dy) {
   const radius=actor.radius||10;
@@ -114,49 +186,68 @@ export function moveActor(world,actor,dx,dy) {
   return moved;
 }
 const navCache=new WeakMap();
-function navigation(world) {
-  if(navCache.has(world))return navCache.get(world);
-  const cell=32,cols=Math.ceil(world.width/cell),rows=Math.ceil(world.height/cell);
+function navigation(world,interior) {
+  const room=interior&&world.buildings.find(b=>b.id===interior)?.room;
+  const space=room||world;
+  if(navCache.has(space))return navCache.get(space);
+  const cell=room?16:24,cols=Math.ceil(space.width/cell),rows=Math.ceil(space.height/cell);
   const free=new Uint8Array(cols*rows);
-  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)free[y*cols+x]=isWalkable(world,x*cell+16,y*cell+16,12)?1:0;
-  const nav={cell,cols,rows,free,paths:new Map()};navCache.set(world,nav);return nav;
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)free[y*cols+x]=isWalkable(world,(x+.5)*cell,(y+.5)*cell,10,interior)?1:0;
+  const nav={cell,cols,rows,free,paths:new Map()};navCache.set(space,nav);return nav;
+}
+function clearSegment(world,a,b,radius,room) {
+  const steps=Math.max(1,Math.ceil(distance(a,b)/8));
+  for(let i=1;i<=steps;i++)if(!isWalkable(world,a.x+(b.x-a.x)*i/steps,a.y+(b.y-a.y)*i/steps,radius,room))return false;
+  return true;
 }
 export function findPath(world,from,to) {
-  if(from.interior||to.interior) return [{x:to.x,y:to.y}];
-  const nav=navigation(world),{cols,rows,free,cell}=nav;
-  function nearest(point) {
-    const cx=Math.min(cols-1,Math.max(0,Math.floor(point.x/cell))),cy=Math.min(rows-1,Math.max(0,Math.floor(point.y/cell)));
-    for(let r=0;r<7;r++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++) {
-      const x=cx+dx,y=cy+dy;
-      if(x>=0&&y>=0&&x<cols&&y<rows&&free[y*cols+x])return y*cols+x;
+  const room=from.interior||null;
+  if(to.interior&&to.interior!==room)return [];
+  if(clearSegment(world,from,to,10,room))return [{x:to.x,y:to.y}];
+  const nav=navigation(world,room),{cols,rows,free,cell}=nav;
+  const point=i=>({x:(i%cols+.5)*cell,y:(Math.floor(i/cols)+.5)*cell});
+  function nearest(p) {
+    const cx=Math.floor(p.x/cell),cy=Math.floor(p.y/cell);
+    for(let r=0;r<5;r++){
+      let best=-1,dist=Infinity;
+      for(let y=Math.max(0,cy-r);y<=Math.min(rows-1,cy+r);y++)for(let x=Math.max(0,cx-r);x<=Math.min(cols-1,cx+r);x++) {
+        const i=y*cols+x,d=distance(p,point(i));
+        if(free[i]&&d<dist&&clearSegment(world,p,point(i),10,room)){best=i;dist=d;}
+      }
+      if(best>=0)return best;
     }
     return -1;
   }
-  const start=nearest(from),end=nearest(to);
-  if(start<0||end<0)return [];
-  const key=`${start}:${end}`;
-  if(nav.paths.has(key))return nav.paths.get(key).map(p=>({...p}));
-  const queue=[start],parents=new Int32Array(cols*rows).fill(-1);parents[start]=start;
-  for(let head=0;head<queue.length;head++) {
-    const at=queue[head];if(at===end)break;
-    const x=at%cols,y=Math.floor(at/cols);
-    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-      const nx=x+dx,ny=y+dy,index=ny*cols+nx;
-      if(nx<0||ny<0||nx>=cols||ny>=rows||!free[index]||parents[index]>=0)continue;
-      parents[index]=at;queue.push(index);
+  const start=nearest(from),end=nearest(to);if(start<0||end<0)return [];
+  const key=start+':'+end;
+  let route=nav.paths.get(key);
+  if(!route) {
+    const queue=[start],parents=new Int32Array(cols*rows).fill(-1);parents[start]=start;
+    for(let head=0;head<queue.length;head++){
+      const at=queue[head];if(at===end)break;
+      for(const next of [at-1,at+1,at-cols,at+cols]){
+        if(next<0||next>=free.length||Math.abs(next%cols-at%cols)>1||!free[next]||parents[next]>=0)continue;
+        // Narrow objects can lie between two free cell centres.
+        const p=point(at),q=point(next);
+        if(!isWalkable(world,(p.x+q.x)/2,(p.y+q.y)/2,10,room))continue;
+        parents[next]=at;queue.push(next);
+      }
     }
+    if(parents[end]<0)return [];
+    const turns=[end];let at=end,heading=0;
+    while(at!==start){const prev=parents[at];if(heading&&at-prev!==heading)turns.push(at);heading=at-prev;at=prev;}
+    turns.push(start);route=turns.reverse().map(point);
+    if(nav.paths.size>=640)nav.paths.clear();nav.paths.set(key,route);
   }
-  if(parents[end]<0)return [];
-  const path=[];let at=end;
-  while(at!==start) {path.push({x:(at%cols)*cell+16,y:Math.floor(at/cols)*cell+16});at=parents[at];}
-  path.reverse();path.push({x:to.x,y:to.y});
-  if(nav.paths.size>300)nav.paths.clear();nav.paths.set(key,path);
-  return path.map(p=>({...p}));
+  return [...route.map(p=>({...p})),{x:to.x,y:to.y}];
 }
 export function canSee(world,a,b) {
   if((a.interior||null)!==(b.interior||null))return false;
-  if(a.interior)return true;
-  const steps=Math.ceil(distance(a,b)/16);
-  for(let i=1;i<steps;i++)if(!isWalkable(world,a.x+(b.x-a.x)*i/steps,a.y+(b.y-a.y)*i/steps,0))return false;
+  if(a.interior)return true; // furniture sits below eye level
+  const steps=Math.max(1,Math.ceil(distance(a,b)/10));
+  for(let i=1;i<steps;i++){
+    const x=a.x+(b.x-a.x)*i/steps,y=a.y+(b.y-a.y)*i/steps;
+    if(world.buildings.some(building=>inside(x,y,0,building)))return false;
+  }
   return true;
 }
