@@ -59,7 +59,7 @@ def bundled_module(path):
     if path.name == "render.js":
         sprites = {
             sprite.stem: data_url("image/png", sprite.read_bytes())
-            for sprite in sorted((PROJECT / "assets").glob("*.png"))
+            for sprite in (PROJECT / "assets" / name for name in ("bench.png", "bin.png"))
         }
         source = replace_once(
             source, "new URL(`../assets/${name}.png`, import.meta.url).href",

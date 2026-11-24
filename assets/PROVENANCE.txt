@@ -1,1 +1,9 @@
-Sprite assets are copies from the project-supplied PostApocalypse Asset Pack by TheLazyStone. No image generation was used for this build. Original source https://thelazystone.itch.io/post-apocalyptic-pixel-art-asset-pack . Read LICENSE.txt for the supplied use terms, including commercial payment and redistribution restrictions.
+Port Lucero uses bench.png and bin.png from the project-supplied PostApocalypse Asset Pack by TheLazyStone. The editable project also retains the supplied character, car, tree and lamp sprite files from the earlier build. The current renderer draws its people, vehicles, buildings, vegetation, harbour scene and effects with Canvas code.
+
+Original pack: https://thelazystone.itch.io/post-apocalyptic-pixel-art-asset-pack
+See assets/LICENSE.txt for the pack's original noncommercial, commercial and redistribution terms. Those terms continue to apply to the supplied sprite files.
+
+Display type: Barlow Condensed Black Italic, copyright 2017 the Barlow Project Authors. Distributed under the SIL Open Font License 1.1. The typeface and full license are embedded in the game's stylesheet for offline use.
+Typeface source: https://github.com/google/fonts/tree/main/ofl/barlowcondensed
+
+No image or music generation tools were used. Code and design development used OpenAI Codex assistance. Background audio can be selected locally by the player.

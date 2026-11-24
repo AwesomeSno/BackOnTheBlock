@@ -385,19 +385,36 @@ export function createRenderer(canvas) {
     }
   }
 
-  function drawEffects(state) {
-    for (const effect of state.effects || []) {
-      if (!inView(effect.x, effect.y) || (effect.interior || null) !== (state.player.interior || null)) continue;
+  function drawEffects(state,still=false) {
+    for(const effect of state.effects||[]){
+      if(!inView(effect.x,effect.y)||(effect.interior||null)!==(state.player.interior||null))continue;
+      const left=Math.max(0,effect.life??0),seed=hash(effect.x+'-'+effect.y);
       ctx.save();
-      ctx.globalAlpha = Math.min(1, (effect.life || 0.3) * 3);
-      if (effect.kind === 'tracer') {
-        line(ctx, effect.x, effect.y - 16, effect.toX ?? effect.x, (effect.toY ?? effect.y) - 16, effect.color || '#e8cf84', 2);
-      } else {
-        const value = hash(`${effect.x}-${effect.y}`);
-        for (let i = 0; i < 7; i++) {
-          const angle = i * Math.PI * 2 / 7 + value % 10;
-          const radius = (1 - Math.min(1, effect.life || 0)) * 20 + 5;
-          rect(ctx, effect.x + Math.cos(angle) * radius, effect.y + Math.sin(angle) * radius, 3, 3, effect.color || '#bd8c5c');
+      if(effect.kind==='tracer'){
+        ctx.globalAlpha=Math.min(.92,left*11);
+        line(ctx,effect.x,effect.y-16,effect.toX??effect.x,(effect.toY??effect.y)-16,effect.color||'#e9d298',1.3);
+        if(!still){
+          const a=Math.atan2((effect.toY??effect.y)-effect.y,(effect.toX??effect.x)-effect.x);
+          const xx=effect.x+Math.cos(a)*7,yy=effect.y-16+Math.sin(a)*7;
+          ellipse(ctx,xx,yy,3,2,'#fff5ba');ellipse(ctx,xx,yy,6,4,'#ffc15a44');
+        }
+      }else if(effect.kind==='dust'){
+        const age=still?.46:Math.max(0,Math.min(1,1-left/.44));
+        for(let i=0;i<4;i++){
+          const side=((seed>>>(i*5))%11)-5;
+          const dx=side*(.5+age*1.8),dy=-i-age*(2+i);
+          ctx.globalAlpha=(1-age)*(.29-i*.032);
+          ellipse(ctx,effect.x+dx,effect.y+dy,2.5+age*(5+i),1.3+age*(3+i*.6),effect.color||'#bdc6c6');
+        }
+      }else{
+        const age=still?.55:Math.max(0,Math.min(1,1-left/.5)),strong=effect.color==='#ffba60'||effect.color==='#f4c571';
+        ctx.globalAlpha=Math.min(1,left*4.1);
+        for(let i=0;i<(strong?10:6);i++){
+          const angle=i*Math.PI*2/(strong?10:6)+seed*.015;
+          const radius=2+age*(8+((seed>>>(i%6))%18));
+          const xx=effect.x+Math.cos(angle)*radius,yy=effect.y+Math.sin(angle)*radius*.69-age*(1-age)*10;
+          const len=strong?2+age*3:1.5;
+          line(ctx,xx,yy,xx-Math.cos(angle)*len,yy-Math.sin(angle)*len*.65,effect.color||'#bd8c5c',strong?1.4:2);
         }
       }
       ctx.restore();
@@ -601,7 +618,7 @@ export function createRenderer(canvas) {
       else paintResident(ctx,v,state,item.type==='player',selected);
     }
     if(!inRoom) atmosphere(state,view);
-    drawEffects(state);
+    drawEffects(state,view.reducedMotion);
     drawMarkers(state, view);
     if (view.aim && !player.vehicleId && player.equipped) {
       const aim = view.aim;

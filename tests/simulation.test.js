@@ -344,11 +344,17 @@ test('known assault victim remembers attacker, absent people receive no identity
 
 test('two in-game days keep actors, resources and effects finite and saveable', () => {
   const state = createGame('long-session');
+  const nightAtHome = new Set();
+  const daytimeStreetWorkers = new Set();
   for (let step = 0; step < 12000; step++) {
     tick(state, 0.1, {});
     if (step % 500 === 0) {
       for (const actor of [state.player, ...state.npcs, ...state.vehicles]) {
         assert.ok(Number.isFinite(actor.x) && Number.isFinite(actor.y), actor.id || 'player');
+      }
+      for (const npc of state.npcs) {
+        if (state.time < 330 && npc.interior === npc.homeId) nightAtHome.add(npc.id);
+        if (state.time > 440 && state.time < 990 && !npc.interior && npc.task.startsWith('on shift as ')) daytimeStreetWorkers.add(npc.id);
       }
       assert.ok(state.effects.length < 100);
       assert.ok(state.messages.length <= 7);
@@ -356,7 +362,8 @@ test('two in-game days keep actors, resources and effects finite and saveable', 
   }
   assert.equal(state.day, 3);
   assert.ok(state.npcs.every(npc => npc.cash >= 0 && Number.isFinite(npc.cash)));
-  assert.ok(state.npcs.filter(npc => npc.interior).length >= 15);
+  assert.ok(nightAtHome.size >= 20, 'Most residents physically returned home overnight');
+  assert.ok(daytimeStreetWorkers.size >= 4, 'Outdoor workers took up their daytime posts');
   const restored = fromSave(toSave(state));
   assert.equal(restored.day, state.day);
   assert.equal(restored.npcs.length, 24);

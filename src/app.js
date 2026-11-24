@@ -339,7 +339,7 @@ function showCredits(inGame=false) {
   paragraph('WASD or arrows: walk. Shift: run. E: interact. In a car, W/S accelerate or reverse and A/D steer. Space brakes. G honks. F equips or stows a pistol. Click or J fires. R reloads. H uses a first aid kit. M map. N people. I bag. L notes. Escape pauses.');
   if(touchInput.matches)paragraph('Use the arrows to move or steer. Hold Run to sprint or Brake to slow your car. Tap a spot on the street to strike or fire in that direction. Open Bag in the notebook to equip a pistol.');
   paragraph('Press E near a resident. Pick a topic with 1, 2 or 3, and Q for more. Conversations play out in the street. Walk away or press E to leave.');
-  paragraph('Concept and direction from Harinand. Development with OpenAI Codex assistance. Vehicle and prop artwork from the supplied PostApocalypse Asset Pack by TheLazyStone. Barlow Condensed by the Barlow Project Authors. The city uses deterministic procedural drawing. No image or music generation tools were used for this build.');
+  paragraph('Concept and direction from Harinand. Development with OpenAI Codex assistance. Bench and bin sprites from the supplied PostApocalypse Asset Pack by TheLazyStone. Barlow Condensed by the Barlow Project Authors. The city uses deterministic procedural drawing. No image or music generation tools were used for this build.');
   paragraph('Sprite license details are in assets/LICENSE.txt. The display typeface is distributed under the SIL Open Font License.','hint');
   addAction('Read the full design document',()=>window.open('design/Game%20Design.html','_blank','noopener'));
   addAction('Close',inGame?showPause:closeModal);

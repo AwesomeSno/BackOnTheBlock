@@ -108,6 +108,14 @@ function curb(world,point) {
   const offset=world.roads.width/2+9;
   return openGround(world,{x:road.x+(road.axis==='v'?offset*side:0),y:road.y+(road.axis==='h'?offset*side:0)});
 }
+function shoulder(world,point){
+  const road=nearRoad(world,point),off=world.roads.width*.43;
+  const side=road.axis==='v'?(Math.sign(point.x-road.x)||1):(Math.sign(point.y-road.y)||1);
+  return {x:road.x+(road.axis==='v'?side*off:0),y:road.y+(road.axis==='h'?side*off:0)};
+}
+function responseRoute(world,from,to){
+  return [...roadPath(world,from,to),shoulder(world,to)];
+}
 function roadPath(world,from,to){
   const a=nearRoad(world,from),b=nearRoad(world,to);
   const points=[{x:a.x,y:a.y}];
@@ -134,8 +142,8 @@ function makeTraffic(state){
       route,leg:(segment+1)%4,x:from.x+(to.x-from.x)*progress,y:from.y+(to.y-from.y)*progress,angle:Math.atan2(to.y-from.y,to.x-from.x),speed:0,cruise:72+(i%5)*10});
   }
   for (const [service,type,model,color] of [['ambulance','clinic',1,'#eee8d9'],['police','police',2,'#536981']]){
-    const site=byType(state,type),road=nearRoad(state.world,site.door);
-    fleet.push({id:'unit-'+service,active:true,service,model,color,health:100,angle:road.axis==='v'?Math.PI/2:0,speed:0,siren:false,x:road.x+12,y:road.y+12,route:[],leg:0,cruise:167});
+    const site=byType(state,type),road=nearRoad(state.world,site.door),bay=shoulder(state.world,site.door);
+    fleet.push({id:'unit-'+service,active:true,service,model,color,health:100,angle:road.axis==='v'?Math.PI/2:0,speed:0,siren:false,x:bay.x,y:bay.y,route:[],leg:0,cruise:167});
   }
   return fleet;
 }
@@ -274,8 +282,30 @@ function emergencyConflict(car,unit){
   const t=clamp(-(dx*vx+dy*vy)/(vx*vx+vy*vy||1),0,1.0);
   return Math.hypot(dx+t*vx,dy+t*vy)<31;
 }
+const junctionReservations=new WeakMap();
+function junctions(state){
+  let reservations=junctionReservations.get(state);
+  if(!reservations){reservations=new Map();junctionReservations.set(state,reservations);}
+  for(const [key,permit] of reservations){
+    const car=permit.car;
+    if(car.incidentId||car.resumeRoute||distance(car,permit.center)>114){reservations.delete(key);continue;}
+    // A car joining a lane during a dispatch detour can end up ahead of its
+    // permit holder. Let the physical head of the queue clear the crossing.
+    const target=car.route[car.leg],cx=Math.cos(car.angle),cy=Math.sin(car.angle);
+    if(!target||distance(target,permit.center)>36)continue;
+    let head=car,best=0;
+    for(const other of state.life.traffic){
+      const goal=other.route[other.leg];
+      if(other===car||other.service||other.incidentId||other.resumeRoute||!goal||distance(goal,permit.center)>36)continue;
+      const dx=other.x-car.x,dy=other.y-car.y,front=dx*cx+dy*cy;
+      if(front>best&&front<100&&Math.abs(dx*cy-dy*cx)<17&&Math.cos(other.angle-car.angle)>.7){head=other;best=front;}
+    }
+    permit.car=head;
+  }
+  return reservations;
+}
 function driveTraffic(state,dt) {
-  const life=state.life;
+  const life=state.life,crossings=junctions(state);
   for(const car of life.traffic){
     if(car.service||car.incidentId)continue;
     if(car.resumeRoute){
@@ -287,10 +317,18 @@ function driveTraffic(state,dt) {
     const target=car.route[car.leg],remaining=distance(car,target);
     const horizontal=Math.abs(Math.cos(car.angle))>.7;
     const signal=(Math.floor(state.elapsed/7)+Math.round(target.x/640)+Math.round(target.y/640))%2;
-    const red=(horizontal?signal===0:signal===1)&&remaining>27&&remaining<54;
+    let waitForTurn=false;
+    if(remaining<98){
+      const center={x:avenue(state.world.roads.vertical,target.x),y:avenue(state.world.roads.horizontal,target.y)};
+      const key=center.x+','+center.y,permit=crossings.get(key);
+      if(!permit){
+        if((horizontal?signal!==0:signal!==1)||remaining<32)crossings.set(key,{car,center});
+        else waitForTurn=true;
+      }else waitForTurn=permit.car!==car;
+    }
     const dirX=Math.cos(car.angle),dirY=Math.sin(car.angle);
     const vehicles=life.traffic;
-    let hazard=red;
+    let hazard=waitForTurn;
     const priority=vehicles.find(unit=>unit.service&&emergencyConflict(car,unit));
     car.yieldingTo=priority?.id||null;
     if(priority){
@@ -302,11 +340,11 @@ function driveTraffic(state,dt) {
         else{const side=-Math.sign(dirY);car.x+=clamp(target.x+10*side-car.x,-12*dt,12*dt);}
       }
     }
-    car.braking=Boolean(hazard&&car.speed>3);
     for(const other of vehicles){
       if(other===car||!other.active||Math.abs(car.x-other.x)>85||Math.abs(car.y-other.y)>85)continue;
       const dx=other.x-car.x,dy=other.y-car.y,front=dx*dirX+dy*dirY;
-      if(front>0&&front<58&&Math.abs(dx*dirY-dy*dirX)<18){hazard=true;break;}
+      const sameLane=Math.cos(other.angle-car.angle)>.68;
+      if(sameLane&&front>0&&front<48&&Math.abs(dx*dirY-dy*dirX)<15){hazard=true;break;}
     }
     // A driver can stop for the player and for people using a crossing.
     if(!hazard){
@@ -321,6 +359,7 @@ function driveTraffic(state,dt) {
         if(front>0&&front<40&&Math.abs(dx*dirY-dy*dirX)<12){hazard=true;break;}
       }
     }
+    car.braking=Boolean(hazard&&car.speed>3);
     const speed=hazard?Math.max(0,car.speed-dt*220):Math.min(car.cruise,car.speed+dt*49);
     vehicleAdvance(car,dt,speed,true);
   }
@@ -547,7 +586,7 @@ function advanceIncident(state,dt){
   if(e.stage==='report'){
     if(stageTime<2)return;
     const current=r.interior?placeById(state,r.interior).door:r;
-    e.pickup=curb(state.world,current);setRoute(unit,roadPath(state.world,unit,e.pickup));
+    e.pickup=curb(state.world,current);setRoute(unit,responseRoute(state.world,unit,e.pickup));
     r.task=medical?'answering an emergency call':'responding to a reported theft';unit.siren=true;
     announceStreet(state,medical?a:v,medical?'Stay with me. An ambulance is coming.':'I can describe them. I’m still here.');
     transition(state,e,'pickup');
@@ -555,7 +594,7 @@ function advanceIncident(state,dt){
     const ready=walk(state,r,e.pickup,null,dt,101);
     const arrived=vehicleAdvance(unit,dt,unit.cruise,false);
     if(ready&&arrived){
-      seated(r,unit);setRoute(unit,roadPath(state.world,unit,e.site));transition(state,e,'enroute');
+      seated(r,unit);setRoute(unit,responseRoute(state.world,unit,e.site));transition(state,e,'enroute');
     }
   }else if(e.stage==='enroute'){
     const arrived=vehicleAdvance(unit,dt,unit.cruise,false);seated(r,unit);
@@ -598,7 +637,7 @@ function advanceIncident(state,dt){
     const arrived=walk(state,r,unit,null,dt,79);
     const boarded=walk(state,passenger,{x:unit.x+8,y:unit.y+6},null,dt,medical?52:75);
     if(arrived&&boarded){
-      seated(r,unit);seated(passenger,unit);setRoute(unit,roadPath(state.world,unit,destination.door));
+      seated(r,unit);seated(passenger,unit);setRoute(unit,responseRoute(state.world,unit,destination.door));
       unit.siren=medical;transition(state,e,'transport');releaseTraffic(state,e);
     }
   }else if(e.stage==='transport'){

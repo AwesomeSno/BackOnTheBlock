@@ -435,7 +435,7 @@ function damagePlayer(state, damage) {
   if (state.player.hurtCooldown > 0) return;
   state.player.hp = Math.max(0, state.player.hp - damage);
   state.player.hurtCooldown = 0.45;
-  state.effects.push({ kind: 'burst', x: state.player.x, y: state.player.y, life: 0.2, color: '#b37669' });
+  state.effects.push({ kind: 'burst', x: state.player.x, y: state.player.y, interior: state.player.interior, life: 0.2, color: '#b37669' });
 }
 function hurtNPC(state, npc, damage, offense = 'assault') {
   if (npc.hp <= 0) return;
@@ -476,8 +476,8 @@ function attack(state) {
   }
   if (armed) {
     const end = victim || { x: player.x + direction.x * range, y: player.y + direction.y * range };
-    state.effects.push({ kind: 'tracer', x: player.x, y: player.y, toX: end.x, toY: end.y, life: 0.13, color: '#efd493' });
-  } else state.effects.push({ kind: 'burst', x: player.x + direction.x * 24, y: player.y + direction.y * 24, life: 0.15, color: '#d9c09c' });
+    state.effects.push({ kind: 'tracer', x: player.x, y: player.y, interior: player.interior, toX: end.x, toY: end.y, life: 0.13, color: '#efd493' });
+  } else state.effects.push({ kind: 'burst', x: player.x + direction.x * 24, y: player.y + direction.y * 24, interior: player.interior, life: 0.15, color: '#d9c09c' });
   if (victim) hurtNPC(state, victim, armed ? 45 : 19, armed ? 'armed assault' : 'assault');
   else if (armed && state.elapsed - (player.lastShotReport || -100) > 5) {
     player.lastShotReport = state.elapsed;

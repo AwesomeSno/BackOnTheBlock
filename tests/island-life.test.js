@@ -124,3 +124,56 @@ test('invalid saved incident and fleet data cannot produce a stuck crew or inval
   for(let i=0;i<80;i++)tick(restored,.1);
   assert.ok(restored.life.traffic.every(v=>Number.isFinite(v.x)&&Number.isFinite(v.y)));
 });
+
+test('drivers yield for an approaching ambulance in their lane and resume after it clears',()=>{
+  const state=createGame('right-of-way');
+  const driver=state.life.traffic[0];
+  const farDriver=state.life.traffic[15];
+  const unit=state.life.traffic.find(v=>v.service==='ambulance');
+  const roadY=state.world.roads.horizontal[0];
+  Object.assign(driver,{x:392,y:roadY+18,angle:0,speed:85,leg:1});
+  Object.assign(unit,{x:330,y:roadY+6,angle:0,speed:140,siren:true});
+  const beforeY=driver.y;
+  tick(state,.1);
+  assert.equal(driver.yieldingTo,unit.id);
+  assert.ok(driver.speed<85);
+  assert.ok(driver.y>beforeY);
+  assert.equal(farDriver.yieldingTo,null);
+  unit.siren=false;
+  const slowed=driver.speed;
+  tick(state,.1);
+  assert.equal(driver.yieldingTo,null);
+  assert.ok(driver.speed>slowed);
+});
+
+test('a local witness reacts and remembers, while a person inside learns nothing',()=>{
+  const state=createGame('harbour-watch');
+  assert.ok(runUntil(state,s=>s.life.incident?.stage==='crossing',200));
+  const event=state.life.incident;
+  const seen=state.npcs[22],absent=state.npcs[20];
+  Object.assign(seen,{x:event.road.x+23,y:event.road.y+15,interior:null,ambientBusy:false,scheduleAt:state.elapsed+15});
+  Object.assign(absent,{interior:state.homeId,scheduleAt:state.elapsed+15});
+  assert.ok(runUntil(state,s=>s.life.incident?.stage==='report',8));
+  assert.ok(event.witnesses.includes(seen.id));
+  assert.ok(!event.witnesses.includes(absent.id));
+  assert.equal(seen.task,'watching the street');
+  assert.ok(seen.memories.some(m=>m.key===event.id+'-witness'&&m.text.startsWith('I saw')));
+  assert.ok(absent.memories.every(m=>!m.key.startsWith(event.id)));
+  const saved=fromSave(toSave(state));
+  assert.ok(saved.npcs[22].memories.some(m=>m.key===event.id+'-witness'));
+  assert.ok(saved.npcs[20].memories.every(m=>!m.key.startsWith(event.id)));
+});
+
+test('opposing turns and cars queued in one lane keep clearing the harbour junctions',()=>{
+  // On this run two drivers used to give way to each other for the rest of
+  // the day. Check actual movement long after their first meeting.
+  const state=createGame('watch-2');
+  const cars=state.life.traffic.filter(car=>!car.service);
+  const travelled=cars.map(()=>0);
+  for(let step=0;step<1800;step++){
+    const before=cars.map(car=>({x:car.x,y:car.y}));
+    tick(state,.1);
+    if(step>=1200)cars.forEach((car,i)=>travelled[i]+=distance(car,before[i]));
+  }
+  for(const [i,moved] of travelled.entries())assert.ok(moved>125,cars[i].id+' remained blocked');
+});
