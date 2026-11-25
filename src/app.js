@@ -1,7 +1,7 @@
 import {createGame,tick,nearby,interaction,act,toSave,fromSave,objective} from './simulation.js';
 import {createRenderer} from './render.js';
 import {distance} from './world.js';
-import {audibleLines,sayLine} from './island-life.js';
+import {audibleLines,sayLine,medicalStatus} from './island-life.js';
 
 const $=id=>document.getElementById(id);
 const canvas=$('world');
@@ -141,7 +141,8 @@ function perform(action,targetId=null,target=null) {
     const npc=target?.kind==='npc'?state.npcs.find(n=>n.id===targetId):null;
     const askedLeave=npc&&action==='invite'&&state.player.companionId===npc.id;
     const result=act(state,action,targetId)||{};
-    if(npc) {
+    const medicalAction=action==='call_ambulance'||action==='first_aid';
+    if(npc&&!medicalAction) {
       const privateNote=action==='share_past'&&state.journal.find(note=>note.text?.includes('privately:'));
       const line=privateNote?.text?.match(/“(.+)”/)?.[1]||(askedLeave?'Catch you later.':spokenActions[action]);
       if(line) hearDirect(state.player,line);
@@ -152,7 +153,7 @@ function perform(action,targetId=null,target=null) {
     } else {
       clearStreet();
       if(modalOpen)closeModal();
-      if(result.text&&!npc)notify(result.text,result.tone||'normal');
+      if(result.text&&(!npc||medicalAction))notify(result.text,result.tone||'normal');
     }
     saveClock=0;save();refreshHUD();
   }catch(error){notify(`That action could not finish. ${error.message}`,'bad');console.error(error);}
@@ -165,7 +166,7 @@ function openInteraction(target) {
   if(target.kind==='npc') {
     const actor=state.npcs.find(n=>n.id===target.id);
     const greeting=data.greeting || data.body.match(/^[“"]([^”"]+)[”"]/)?.[1];
-    if(actor&&greeting) {
+    if(actor&&actor.hp>0&&!actor.medicalHeld&&greeting) {
       hearDirect(actor,greeting.replace(/^[“"]|[”"]$/g,''));
       actor.conversationUntil=state.elapsed+.65;
     }
@@ -215,7 +216,7 @@ function renderStreet() {
   if(pages>1){more.textContent=`More  ·  ${choicePage+1}/${pages}   [Q]`;more.onclick=()=>{choicePage=(choicePage+1)%pages;renderStreet();};}
 }
 function interact() {
-  if(!playing||modalOpen)return;
+  if(!playing||modalOpen||state.player.medicalHeld||state.player.hp<=0)return;
   if(street){clearStreet();return;}
   const targets=nearby(state);
   if(!targets.length){notify('Move closer to a person, door or vehicle.');return;}
@@ -317,7 +318,7 @@ function showPause() {
   addAction('Settings',showSettings);
   addAction('Controls & credits',()=>showCredits(true));
   addAction('Main menu',()=>{
-    save();playing=false;clearStreet();clearSpeech();closeModal();$('notifications').replaceChildren();
+    save();playing=false;document.body.classList.remove('in-car','needs-care');clearStreet();clearSpeech();closeModal();$('notifications').replaceChildren();
     $('title-screen').hidden=false;
     for(const id of [...hudElements,'control-hints','prompt','touch-controls'])$(id).hidden=true;
     storageAvailable();$('continue-button').focus();
@@ -336,7 +337,7 @@ function showSettings() {
 }
 function showCredits(inGame=false) {
   openModal('Controls & credits','BACK ON THE BLOCK','credits');
-  paragraph('WASD or arrows: walk. Shift: run. E: interact. In a car, W/S accelerate or reverse and A/D steer. Space brakes. G honks. F equips or stows a pistol. Click or J fires. R reloads. H uses a first aid kit. M map. N people. I bag. L notes. Escape pauses.');
+  paragraph('WASD or arrows: walk. Shift: run. E: interact. In a car, W/S accelerate or reverse and A/D steer. Space brakes. G honks. F equips or stows a pistol. Click or J fires. R reloads. H uses a first aid kit. C calls an ambulance. M map. N people. I bag. L notes. Escape pauses.');
   if(touchInput.matches)paragraph('Use the arrows to move or steer. Hold Run to sprint or Brake to slow your car. Tap a spot on the street to strike or fire in that direction. Open Bag in the notebook to equip a pistol.');
   paragraph('Press E near a resident. Pick a topic with 1, 2 or 3, and Q for more. Conversations play out in the street. Walk away or press E to leave.');
   paragraph('Concept and direction from Harinand. Development with OpenAI Codex assistance. Bench and bin sprites from the supplied PostApocalypse Asset Pack by TheLazyStone. Barlow Condensed by the Barlow Project Authors. The city uses deterministic procedural drawing. No image or music generation tools were used for this build.');
@@ -348,6 +349,7 @@ function handleKey(key) {
   if(key==='escape'&&street){clearStreet();return;}
   if(key==='escape'||key==='p') {if(modalOpen)closeModal();else showPause();return;}
   if(!playing||modalOpen)return;
+  if(key==='c'){perform('call_ambulance');return;}
   if(street&&['1','2','3'].includes(key)){
     $('street-options').children[Number(key)-1]?.click();return;
   }
@@ -405,6 +407,7 @@ for(const item of $('main-menu').querySelectorAll('button')) {
 $('settings-button').onclick=showSettings;
 $('credits-button').onclick=()=>showCredits();$('close-modal').onclick=closeModal;
 $('prompt').onclick=interact;$('end-interaction').onclick=clearStreet;
+$('call-ambulance').onclick=()=>perform('call_ambulance');
 $('pause-button').onclick=showPause;$('save-button').onclick=()=>save(true);$('minimap-button').onclick=()=>showPanel('map');
 document.querySelectorAll('[data-panel]').forEach(button=>button.onclick=()=>showPanel(button.dataset.panel));
 document.querySelectorAll('[data-touch]').forEach(button=>{
@@ -422,6 +425,42 @@ $('import-music').onchange=event=>{
   const file=event.target.files[0];event.target.value='';if(!file)return;
   if(musicURL)URL.revokeObjectURL(musicURL);musicURL=URL.createObjectURL(file);music.src=musicURL;music.volume=settings.music;notify('Track selected. It will play when you return to the street.','good');
 };
+function updateInstruments(player,vehicle) {
+  const instruments=$('vehicle-vitals');
+  instruments.hidden=!vehicle;
+  document.body.classList.toggle('in-car',!!vehicle);
+  if(vehicle) {
+    for(const [id,value] of [['car-condition',vehicle.health],['car-fuel',vehicle.fuel]]) {
+      const meter=$(id),fraction=Math.max(0,Math.min(100,value));
+      meter.value=fraction;meter.parentElement.dataset.low=String(fraction<=25);
+      $(id+'-text').textContent=Math.ceil(fraction)+'%';
+    }
+    const warning=vehicle.health<=0?'Vehicle disabled':vehicle.fuel<=0?'Out of fuel':vehicle.health<=25?'Critical damage':vehicle.fuel<=12?'Low fuel':'';
+    $('car-warning').hidden=!warning;$('car-warning').textContent=warning;
+  }
+  $('vehicle-status').hidden=!!vehicle;
+  $('vehicle-status').textContent=player.equipped?
+    `${player.magazine||0}/6 LOADED · ${Math.max(0,(player.inventory.ammo||0)-(player.magazine||0))} SPARE`:
+    `ENERGY ${Math.round(player.stamina)}`;
+}
+function updateMedicalHUD(player) {
+  const care=medicalStatus(state,player);
+  const stage=care?.stage,down=player.hp<=0||player.medicalHeld;
+  const injury=player.injury;
+  const hasSymptoms=down||stage||player.hp<=65||injury&&injury.until>state.elapsed;
+  const panel=$('medical-status');panel.hidden=!hasSymptoms;
+  document.body.classList.toggle('needs-care',!!hasSymptoms);
+  if(!hasSymptoms)return;
+  const remaining=injury?.until>state.elapsed?Math.ceil(injury.until-state.elapsed):0;
+  const symptom=injury?.severity==='critical'?'Critical injury':injury?.severity==='serious'?'Serious injury':down?'Downed':injury?'Minor injury':'Wounded';
+  const careTitles={treatment:'Receiving treatment',board:'Medical transfer',transport:'Ambulance transport',admit:'Clinic admission',intake:'Receiving treatment'};
+  const title=careTitles[stage]||symptom;
+  const progress=stage?care.message:down?'Medical assistance needed':remaining?`Recovering · ${remaining}s`:'';
+  if($('injury-label').textContent!==title)$('injury-label').textContent=title;
+  if($('care-progress').textContent!==progress)$('care-progress').textContent=progress;
+  $('call-ambulance').hidden=!!stage;
+  if(down&&street)clearStreet();
+}
 function refreshHUD() {
   if(!playing)return;
   const p=state.player,world=state.world,room=world.buildings.find(b=>b.id===p.interior);
@@ -442,7 +481,9 @@ function refreshHUD() {
     $('touch-extra').textContent=vehicle?'Honk':'Reload';
     $('touch-extra').dataset.tap=vehicle?'g':'r';
   }
-  $('vehicle-status').textContent=vehicle?`FUEL ${Math.round(vehicle.fuel)} · CAR ${Math.round(vehicle.health)}`:(p.equipped?`${p.magazine||0}/6 LOADED · ${Math.max(0,(p.inventory.ammo||0)-(p.magazine||0))} SPARE`:`ENERGY ${Math.round(p.stamina)}`);
+  updateInstruments(p,vehicle);
+  updateMedicalHUD(p);
+  if(vehicle||!$('medical-status').hidden)$('control-hints').hidden=true;
   const dispatch=state.policeStatus||{stage:'clear',seconds:0,label:'Clear'};
   $('legal').dataset.stage=dispatch.stage;
   const marker={witness:25,search:10,pursuit:90,'on file':38}[dispatch.stage]||50;
@@ -457,7 +498,7 @@ function refreshHUD() {
   $('waypoint-text').textContent=point&&!p.interior?`${manualWaypoint?.name||'Next lead'} · ${Math.round(distance(p,point)/10)} m`:'';
   const targets=nearby(state);
   if(street&&!modalOpen)renderStreet();
-  $('prompt').hidden=!targets.length||modalOpen||!!street;
+  $('prompt').hidden=!targets.length||modalOpen||!!street||p.medicalHeld||p.hp<=0;
   if(targets.length)$('prompt-text').textContent=targets.length>1?`Nearby · ${targets[0].label}`:targets[0].label;
   if(!modalOpen)refreshSpeech();
   renderer.drawMap($('minimap'),state,false,manualWaypoint||goal.target);
@@ -486,7 +527,7 @@ function frame(now) {
   if(playing&&!modalOpen) {
     if(street?.target?.kind==='npc') {
       const actor=state.npcs.find(n=>n.id===street.target.id);
-      if(actor&&actor.interior===state.player.interior&&distance(actor,state.player)<85)actor.conversationUntil=state.elapsed+.65;
+      if(actor&&actor.hp>0&&!actor.medicalHeld&&actor.interior===state.player.interior&&distance(actor,state.player)<85)actor.conversationUntil=state.elapsed+.65;
     }
     const held=key=>keys.has(key);
     aim=pointer?renderer.screenToWorld(pointer.x,pointer.y):null;

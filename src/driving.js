@@ -1,4 +1,7 @@
 import {isWalkable} from './world.js';
+import {axle,touchesCar} from './vehicle-geometry.js';
+import {dentVehicle} from './impacts.js';
+export {hitsCar} from './vehicle-geometry.js';
 
 const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
 const toward=(n,target,step)=>n+Math.sign(target-n)*Math.min(step,Math.abs(target-n));
@@ -9,20 +12,6 @@ function roadSurface(world,x,y) {
   if(world.parks.some(p=>x>=p.x&&x<=p.x+p.w&&y>=p.y&&y<=p.y+p.h))return 'grass';
   return 'pavement';
 }
-// Solid car body is a capsule: a short wheelbase segment with rounded bumpers.
-function halfAxle(car){return car.model==='van'||car.service?14:12;}
-function axle(car){const a=car.angle||0,l=halfAxle(car);return [Math.cos(a)*l,Math.sin(a)*l];}
-function pointToAxle(x,y,car){
-  const [dx,dy]=axle(car),t=clamp(((x-car.x)*dx+(y-car.y)*dy)/(dx*dx+dy*dy),-1,1);
-  return Math.hypot(x-car.x-t*dx,y-car.y-t*dy);
-}
-export function hitsCar(x,y,car,radius=7){return Math.abs(x-car.x)<36&&Math.abs(y-car.y)<36&&pointToAxle(x,y,car)<10+radius;}
-function touchesCar(a,b){
-  if(Math.abs(a.x-b.x)>52||Math.abs(a.y-b.y)>52)return false;
-  const [ax,ay]=axle(a),[bx,by]=axle(b);
-  return pointToAxle(a.x+ax,a.y+ay,b)<20||pointToAxle(a.x-ax,a.y-ay,b)<20||
-    pointToAxle(b.x+bx,b.y+by,a)<20||pointToAxle(b.x-bx,b.y-by,a)<20||pointToAxle(a.x,a.y,b)<20;
-}
 function clearPose(world,pose,others) {
   const [dx,dy]=axle(pose);
   return isWalkable(world,pose.x,pose.y,10)&&isWalkable(world,pose.x-dx,pose.y-dy,10)&&
@@ -30,8 +19,10 @@ function clearPose(world,pose,others) {
 }
 export function drive(state,car,turn,gas,brake,dt) {
   const surface=roadSurface(state.world,car.x,car.y),van=car.model==='van';
-  const forwardLimit=(van?219:267)*(surface==='grass'?.46:surface==='pavement'?.75:1);
+  const forwardLimit=(van?219:267)*(.5+.5*Math.min(1,(car.health??100)/60))*(surface==='grass'?.46:surface==='pavement'?.75:1);
   const reversing=gas&&car.speed*gas<0;
+  car.braking=Boolean(brake||reversing);
+  if(car.health<=0){car.speed=0;return 0;}
   car.steer=toward(car.steer||0,turn,dt*(turn?3.1:5.5));
   if(brake||reversing)car.speed=toward(car.speed,0,dt*(brake?260:185));
   else if(gas&&car.fuel>0)car.speed=toward(car.speed,gas>0?forwardLimit:-72,dt*(van?98:124)*(surface==='grass'?.62:1));
@@ -47,9 +38,13 @@ export function drive(state,car,turn,gas,brake,dt) {
     if(!clearPose(state.world,pose,others)){
       car.speed=speed>43?-car.speed*.12:0;car.steer*=.68;
       if(speed>38&&(!car.lastImpact||state.elapsed-car.lastImpact>.8)){
-        car.lastImpact=state.elapsed;car.health=Math.max(0,car.health-speed*.045);
-        state.effects.push({kind:'burst',x:pose.x+Math.cos(nextAngle)*18,y:pose.y+Math.sin(nextAngle)*18,life:.36,color:'#ffba60'});
-        return speed;
+        car.lastImpact=state.elapsed;
+        const point={x:pose.x+Math.cos(nextAngle)*18,y:pose.y+Math.sin(nextAngle)*18};
+        const other=others.find(v=>touchesCar(pose,v));
+        const closing=other?Math.min(330,Math.hypot(Math.cos(car.angle)*speed-Math.cos(other.angle||0)*(other.speed||0),Math.sin(car.angle)*speed-Math.sin(other.angle||0)*(other.speed||0))):speed;
+        dentVehicle(state,car,closing,point);
+        if(other){dentVehicle(state,other,closing,point,.8);other.speed=0;other.braking=true;car.lastCollision.otherId=other.id;}
+        return closing;
       }
       break;
     }

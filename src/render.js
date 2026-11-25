@@ -615,7 +615,7 @@ export function createRenderer(canvas) {
       }else if(item.type==='furniture')drawFurniture(v,interior.type);
       else if(item.type==='prop')drawProp(v,night);
       else if(item.type==='car')paintVehicle(ctx,v,state,selected,view.reducedMotion);
-      else paintResident(ctx,v,state,item.type==='player',selected);
+      else paintResident(ctx,v,state,item.type==='player',selected,view.reducedMotion);
     }
     if(!inRoom) atmosphere(state,view);
     drawEffects(state,view.reducedMotion);

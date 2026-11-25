@@ -1,4 +1,6 @@
-import {buildingByType, canSee, distance, findPath, isWalkable, moveActor} from './world.js';
+import {hitsCar} from './driving.js';
+import {pedestrianWorld,pedestrianPath,movePedestrian} from './pedestrian.js';
+import {buildingByType, canSee, distance, isWalkable} from './world.js';
 
 // A resident stays the same person across games. Only the day's encounters vary.
 const profiles = [
@@ -113,8 +115,64 @@ function shoulder(world,point){
   const side=road.axis==='v'?(Math.sign(point.x-road.x)||1):(Math.sign(point.y-road.y)||1);
   return {x:road.x+(road.axis==='v'?side*off:0),y:road.y+(road.axis==='h'?side*off:0)};
 }
-function responseRoute(world,from,to){
-  return [...roadPath(world,from,to),shoulder(world,to)];
+function blocksUnit(parked,p,angle){
+  // Sweep the two unit bumpers and their midpoint against the parked body.
+  const dx=Math.cos(angle)*14,dy=Math.sin(angle)*14;
+  return parked.some(car=>hitsCar(p.x,p.y,car,11)||hitsCar(p.x-dx,p.y-dy,car,11)||hitsCar(p.x+dx,p.y+dy,car,11));
+}
+function clearDrive(parked,from,to){
+  const d=distance(from,to);
+  if(d<.01)return !blocksUnit(parked,to,0);
+  const angle=Math.atan2(to.y-from.y,to.x-from.x),parts=Math.ceil(d/8);
+  for(let i=0;i<=parts;i++){
+    const p={x:from.x+(to.x-from.x)*i/parts,y:from.y+(to.y-from.y)*i/parts};
+    if(blocksUnit(parked,p,angle))return false;
+  }
+  return true;
+}
+function avoidParked(parked,from,points){
+  const result=[];
+  let start=from;
+  for(const point of points){
+    const d=distance(start,point);
+    if(d<1)continue;
+    const dx=(point.x-start.x)/d,dy=(point.y-start.y)/d,angle=Math.atan2(dy,dx);
+    let current=start;
+    for(const car of parked.map(car=>({car,t:(car.x-start.x)*dx+(car.y-start.y)*dy})).filter(o=>o.t>0&&o.t<d).sort((a,b)=>a.t-b.t)){
+      const axis={x:start.x+dx*car.t,y:start.y+dy*car.t};
+      if(!blocksUnit([car.car],axis,angle))continue;
+      const sign=(car.car.x-axis.x)*(-dy)+(car.car.y-axis.y)*dx>0?-1:1;
+      let detour=null;
+      for(const side of [sign,-sign]){
+        const before={x:axis.x-dx*53-dy*34*side,y:axis.y-dy*53+dx*34*side};
+        const after={x:axis.x+dx*53-dy*34*side,y:axis.y+dy*53+dx*34*side};
+        if(clearDrive(parked,current,before)&&clearDrive(parked,before,after)){detour=[before,after];break;}
+      }
+      if(!detour)return null;
+      result.push(...detour);current=detour[1];
+    }
+    if(!clearDrive(parked,current,point))return null;
+    result.push(point);start=point;
+  }
+  return result;
+}
+function responseRoute(state,from,to){
+  const world=state.world, road=nearRoad(world,to), bay=shoulder(world,to);
+  const parked=state.vehicles.filter(v=>v.parked!==false||Math.abs(v.speed||0)<2);
+  // Pick an actual open lay-by. Joining the road after leaving a station and
+  // the final turn into the bay must both clear the parked vehicle body.
+  const sign=road.axis==='v'?{x:1,y:0}:{x:0,y:1};
+  for(const side of [1,-1]){
+    for(const shift of [0,52,-52,88,-88,130,-130]){
+      const end={x:road.x+(bay.x-road.x)*side+sign.y*shift,y:road.y+(bay.y-road.y)*side+sign.x*shift};
+      const entry={x:road.x+sign.y*shift,y:road.y+sign.x*shift};
+      if(!isWalkable(world,end.x,end.y,17)||!clearDrive(parked,entry,end))continue;
+      const path=avoidParked(parked,from,[...roadPath(world,from,entry),end]);
+      if(path)return path;
+    }
+  }
+  // The nearest street is still usable when both shoulders are occupied.
+  return avoidParked(parked,from,roadPath(world,from,to))||[];
 }
 function roadPath(world,from,to){
   const a=nearRoad(world,from),b=nearRoad(world,to);
@@ -148,7 +206,7 @@ function makeTraffic(state){
   return fleet;
 }
 export function initializeLife(state){
-  state.life={version:1,rng:(state.rngState^0x937ad8)>>>0,serial:0,traffic:makeTraffic(state),speech:[],chats:[],reactions:[],history:[],incident:null,nextIncident:15,nextChat:1,incidentCount:0,lastKind:null};
+  state.life={version:1,rng:(state.rngState^0x937ad8)>>>0,serial:0,traffic:makeTraffic(state),speech:[],chats:[],reactions:[],history:[],incident:null,nextIncident:15,nextChat:1,incidentCount:0,lastKind:null,medical:{queue:[],active:null,playerStatus:null,message:''}};
   const homes=state.world.buildings.filter(b=>b.type==='home'||b.type==='apartment');
   const householdUnits=[0,1,2,3,4,5,6,1,2,7,8,9,1,10,4,11,7,9,3,10,12,11,2,12];
   const home=byType(state,'home'),placed=[state.player];
@@ -216,7 +274,7 @@ const talkTopics=[
   ['First ferry was empty today.','Everyone heard about the new baggage fee.'],
 ];
 function freeForLife(state,npc){
-  if(!npc||npc.hp<50||npc.ambientBusy||npc.inServiceVehicle||npc.passengerOf||npc.panicUntil>state.elapsed||npc.conversationUntil>state.elapsed||npc.id===state.player.companionId)return false;
+  if(!npc||npc.hp<50||npc.medicalHeld||npc.policeDuty||npc.ambientBusy||npc.inServiceVehicle||npc.passengerOf||npc.panicUntil>state.elapsed||npc.conversationUntil>state.elapsed||npc.id===state.player.companionId)return false;
   return !(state.events||[]).some(e=>(e.stage==='open'||e.stage==='accepted')&&e.npcId===npc.id&&e.type!=='dropped_wallet'&&e.type!=='lost_bag');
 }
 function startChat(state){
@@ -256,6 +314,7 @@ function updateChats(state){
   if(state.elapsed>=life.nextChat){startChat(state);life.nextChat=state.elapsed+2.5+roll(life)*4;}
 }
 function vehicleAdvance(car,dt,speed,repeat){
+  if(car.health<=0){car.speed=0;car.siren=false;return false;}
   const dest=car.route[car.leg];
   if(!dest){car.speed=0;return true;}
   const dx=dest.x-car.x,dy=dest.y-car.y,length=Math.hypot(dx,dy);
@@ -307,7 +366,7 @@ function junctions(state){
 function driveTraffic(state,dt) {
   const life=state.life,crossings=junctions(state);
   for(const car of life.traffic){
-    if(car.service||car.incidentId)continue;
+    if(car.service||car.incidentId||car.health<=0){if(car.health<=0)car.speed=0;continue;}
     if(car.resumeRoute){
       if(vehicleAdvance(car,dt,car.cruise*.8,false)){
         car.route=car.resumeRoute;car.leg=car.rejoinIndex||0;car.resumeRoute=null;
@@ -359,6 +418,10 @@ function driveTraffic(state,dt) {
         if(front>0&&front<40&&Math.abs(dx*dirY-dy*dirX)<12){hazard=true;break;}
       }
     }
+    if(!hazard){
+      const ahead={x:car.x+dirX*36,y:car.y+dirY*36};
+      hazard=blocksUnit(state.vehicles.filter(v=>v.parked!==false),ahead,car.angle);
+    }
     car.braking=Boolean(hazard&&car.speed>3);
     const speed=hazard?Math.max(0,car.speed-dt*220):Math.min(car.cruise,car.speed+dt*49);
     vehicleAdvance(car,dt,speed,true);
@@ -369,7 +432,7 @@ function walk(state,npc,goal,room,dt,speed){
   if(npc.interior&&npc.interior!==room){
     const building=placeById(state,npc.interior);
     if(walkSame(state,npc,building.room.exit,dt,speed)){
-      npc.interior=null;Object.assign(npc,openGround(state.world,building.door));moves.delete(npc);npc.path=[];
+      npc.interior=null;Object.assign(npc,openGround(pedestrianWorld(state),building.door));moves.delete(npc);npc.path=[];
     }
     return false;
   }
@@ -386,15 +449,17 @@ function walkSame(state,npc,goal,dt,speed){
   if(distance(npc,goal)<9){npc.moving=false;return true;}
   let route=moves.get(npc);
   if(!route||route.room!==npc.interior||distance(route.goal,goal)>13){
-    route={goal:{...goal},room:npc.interior,path:findPath(state.world,npc,{...goal,interior:npc.interior})||[],index:0};
+    route={goal:{...goal},room:npc.interior,path:pedestrianPath(state,npc,{...goal,interior:npc.interior})||[],index:0};
     moves.set(npc,route);
   }
   let target=route.path[route.index]||goal;
   while(distance(npc,target)<7&&route.index<route.path.length){route.index++;target=route.path[route.index]||goal;}
+  const last=route.path.at(-1);
+  if(last&&route.index>=route.path.length&&distance(npc,last)<9&&distance(last,goal)<42){npc.moving=false;return true;}
   const d=distance(npc,target);
   if(d<1)return false;
   const pace=Math.min(speed*dt,d),oldX=npc.x,oldY=npc.y;
-  moveActor(state.world,npc,(target.x-npc.x)*pace/d,(target.y-npc.y)*pace/d);
+  movePedestrian(state,npc,(target.x-npc.x)*pace/d,(target.y-npc.y)*pace/d);
   npc.moving=distance(npc,{x:oldX,y:oldY})>.05;
   npc.angle=Math.atan2(target.y-oldY,target.x-oldX);
   if(!npc.moving)moves.delete(npc);
@@ -412,7 +477,7 @@ function setRoute(car,path){car.route=path;car.leg=0;car.speed=0;}
 function seated(npc,car){npc.inServiceVehicle=car.id;npc.passengerOf=car.id;npc.interior=null;npc.x=car.x;npc.y=car.y;npc.moving=false;}
 function stepOut(state,npc,car,spot){
   npc.inServiceVehicle=null;npc.passengerOf=null;npc.interior=null;
-  const p=openGround(state.world,spot||car,9,null,state.npcs.filter(n=>n!==npc&&!n.interior&&!n.inServiceVehicle));
+  const p=openGround(pedestrianWorld(state),spot||car,9,null,state.npcs.filter(n=>n!==npc&&!n.interior&&!n.inServiceVehicle));
   Object.assign(npc,p);npc.path=[];moves.delete(npc);
 }
 function announceStreet(state,actor,line){sayLine(state,actor,line,'ambient');}
@@ -465,7 +530,8 @@ function startIncident(state){
   // Incidents happen on the road grid. They are selected from the residents'
   // locations and are never relocated around a moving camera.
   if(kind==='accident'){
-    const choices=life.traffic.filter(v=>!v.service&&!v.incidentId);
+    const choices=life.traffic.filter(v=>!v.service&&!v.incidentId&&v.health>0);
+    if(!choices.length)return false;
     const car=closest(choices,site);
     if(!car)return false;
     event.trafficId=car.id;
@@ -494,7 +560,7 @@ function conclude(state,event,outcome){
   const life=state.life, responders=state.npcs.filter(n=>[event.responderId,event.actorId,event.victimId].includes(n.id));
   for(const n of responders){
     if(n.inServiceVehicle){const car=life.traffic.find(v=>v.id===n.inServiceVehicle);if(car)stepOut(state,n,car);}
-    release(n);
+    if(!n.medicalHeld)release(n);
   }
   const unit=life.traffic.find(v=>v.id===event.unitId);if(unit){unit.siren=false;unit.speed=0;unit.route=[];unit.leg=0;}
   releaseTraffic(state,event);
@@ -541,7 +607,7 @@ function advanceIncident(state,dt){
   const life=state.life,e=life.incident,a=byId(state,e.actorId),v=byId(state,e.victimId),r=byId(state,e.responderId);
   const car=life.traffic.find(n=>n.id===e.trafficId),unit=life.traffic.find(n=>n.id===e.unitId);
   const medical=e.kind==='accident',stageTime=state.elapsed-e.stageAt;
-  if(!a||!v||!r||!unit||r.hp<=0||a.hp<=0||v.hp<=0||state.elapsed-e.start>270){conclude(state,e,null);return;}
+  if(!a||!v||!r||!unit||unit.health<=0||car?.health<=0||r.medicalHeld||a.medicalHeld||v.medicalHeld||r.hp<=0||a.hp<=0||v.hp<=0||state.elapsed-e.start>270){conclude(state,e,null);return;}
   const destination=byType(state,medical?'clinic':'police');
   const passenger=medical?v:a;
   if(e.stage==='approach'){
@@ -586,15 +652,15 @@ function advanceIncident(state,dt){
   if(e.stage==='report'){
     if(stageTime<2)return;
     const current=r.interior?placeById(state,r.interior).door:r;
-    e.pickup=curb(state.world,current);setRoute(unit,responseRoute(state.world,unit,e.pickup));
+    e.pickup=curb(state.world,current);setRoute(unit,responseRoute(state,unit,e.pickup));
     r.task=medical?'answering an emergency call':'responding to a reported theft';unit.siren=true;
     announceStreet(state,medical?a:v,medical?'Stay with me. An ambulance is coming.':'I can describe them. I’m still here.');
     transition(state,e,'pickup');
   }else if(e.stage==='pickup'){
-    const ready=walk(state,r,e.pickup,null,dt,101);
     const arrived=vehicleAdvance(unit,dt,unit.cruise,false);
+    const ready=walk(state,r,arrived?unit:e.pickup,null,dt,101);
     if(ready&&arrived){
-      seated(r,unit);setRoute(unit,responseRoute(state.world,unit,e.site));transition(state,e,'enroute');
+      seated(r,unit);setRoute(unit,responseRoute(state,unit,e.site));transition(state,e,'enroute');
     }
   }else if(e.stage==='enroute'){
     const arrived=vehicleAdvance(unit,dt,unit.cruise,false);seated(r,unit);
@@ -637,7 +703,7 @@ function advanceIncident(state,dt){
     const arrived=walk(state,r,unit,null,dt,79);
     const boarded=walk(state,passenger,{x:unit.x+8,y:unit.y+6},null,dt,medical?52:75);
     if(arrived&&boarded){
-      seated(r,unit);seated(passenger,unit);setRoute(unit,responseRoute(state.world,unit,destination.door));
+      seated(r,unit);seated(passenger,unit);setRoute(unit,responseRoute(state,unit,destination.door));
       unit.siren=medical;transition(state,e,'transport');releaseTraffic(state,e);
     }
   }else if(e.stage==='transport'){
@@ -658,11 +724,13 @@ export function updateLife(state,dt){
   const life=state.life;
   if(!life||!dt)return;
   life.speech=life.speech.filter(line=>line.until>state.elapsed);
+  serviceRepairs(state,dt);
   driveTraffic(state,dt);
+  updateMedical(state,dt);
   updateChats(state);
   updateReactions(state,dt);
   if(life.incident)advanceIncident(state,dt);
-  else if(state.elapsed>=life.nextIncident && !startIncident(state))life.nextIncident=state.elapsed+4;
+  else if(!life.medical.active&&!life.medical.queue.some(c=>c.callerId)&&state.elapsed>=life.nextIncident && !startIncident(state))life.nextIncident=state.elapsed+4;
 }
 
 const finite=(x,lo,hi)=>typeof x==='number'&&Number.isFinite(x)&&x>=lo&&x<=hi;
@@ -707,6 +775,8 @@ export function restoreLife(state,data){
       if(!point(old)||!validPath(old.route))continue;
       const pending=life.incident?.trafficId===car.id&&old.incidentId===life.incident.id;
       if(!car.service&&(!pending&&!old.resumeRoute&&!old.route.length))continue;
+      if(finite(old.health,0,100))car.health=old.health;
+      if(finite(old.repairAt,0,state.elapsed+60))car.repairAt=old.repairAt;
       Object.assign(car,clean(old),{angle:finite(old.angle,-8,8)?old.angle:0,speed:finite(old.speed,0,250)?old.speed:0});
       if(car.service||pending||validPath(old.resumeRoute)){
         car.route=old.route.map(clean);
@@ -719,7 +789,8 @@ export function restoreLife(state,data){
       }
       car.leg=finite(old.leg,0,car.route.length)?Math.floor(old.leg):0;
       if(!car.service&&!car.incidentId&&!car.resumeRoute?.length)car.leg%=car.route.length;
-      car.siren=Boolean(old.siren&&life.incident?.unitId===car.id);
+      car.siren=Boolean(car.health>0&&old.siren&&(life.incident?.unitId===car.id||raw.medical?.active&&car.service==='ambulance'));
+      if(car.health<=0)car.speed=0;
     }
   }
   for(const person of state.npcs){
@@ -730,4 +801,241 @@ export function restoreLife(state,data){
   if(Array.isArray(raw.history))life.history=raw.history.filter(h=>h&&['accident','robbery'].includes(h.kind)&&validId(h.actorId)&&validId(h.victimId)&&validId(h.responderId)&&typeof h.outcome==='string'&&finite(h.at,0,state.elapsed+.1)).slice(-35).map(h=>({
     id:String(h.id).slice(0,70),kind:h.kind,outcome:h.outcome.slice(0,250),at:h.at,day:h.day,time:h.time,actorId:h.actorId,victimId:h.victimId,responderId:h.responderId,witnesses:Array.isArray(h.witnesses)?h.witnesses.filter(validId).slice(0,28):[],
   }));
+  restoreMedical(state,raw.medical);
+}
+
+const medicalStages=['waiting','pickup','enroute','attend','treatment','board','transport','admit','intake'];
+const causes=['collision','assault','injury','illness'];
+const patientById=(state,id)=>id==='player'?state.player:byId(state,id);
+const patientId=(state,p)=>typeof p==='string'?p:p===state.player?'player':p?.id;
+const clinic=(state)=>byType(state,'clinic');
+function findCaller(state,patient,details={}){
+  if(patient.interior===clinic(state).id)return 'clinic';
+  if(details.selfCall&&(patient===state.player||(sameRoom(patient,state.player)&&distance(patient,state.player)<175&&canSee(state.world,patient,state.player))))return 'player';
+  const eligible=n=>n!==patient&&n.id!==details.attackerId&&n.hp>28&&!n.medicalHeld&&!n.inServiceVehicle&&sameRoom(n,patient)&&distance(n,patient)<173&&canSee(state.world,n,patient);
+  const first=byId(state,details.witnessId);
+  if(first&&eligible(first))return first.id;
+  const witnesses=state.npcs.filter(eligible);
+  return closest(witnesses,patient)?.id||null;
+}
+function markCall(state,req,caller){
+  if(!caller)return false;
+  req.callerId=caller;req.stage='waiting';req.calledAt=state.elapsed;
+  const person=byId(state,caller);
+  if(person)sayLine(state,person,'I can see them. Sending an ambulance now.','ambient');
+  return true;
+}
+function endStreetConversation(state,actor){
+  for(const chat of state.life.chats)if(chat.a===actor.id||chat.b===actor.id)chat.end=state.elapsed;
+  state.life.reactions=state.life.reactions.filter(reaction=>reaction.npcId!==actor.id);
+  updateChats(state);
+}
+function holdPatient(state,person){
+  if(person===state.player&&person.vehicleId){
+    const vehicle=state.vehicles.find(v=>v.id===person.vehicleId);
+    person.vehicleId=null;
+    if(vehicle){
+      vehicle.speed=0;vehicle.parked=true;
+      const perp=vehicle.angle+Math.PI/2;
+      const edge= {x:vehicle.x+Math.cos(perp)*31,y:vehicle.y+Math.sin(perp)*31};
+      Object.assign(person,openGround(pedestrianWorld(state),edge,10));
+      for(const rider of state.npcs)if(rider.passengerOf===vehicle.id)stepOut(state,rider,vehicle,person);
+    }
+  }
+  if(person!==state.player)endStreetConversation(state,person);
+  person.moving=false;person.medicalHeld=true;person.pose='fallen';
+  if(person!==state.player){person.ambientBusy=true;person.task='waiting for medical help';person.path=[];}
+}
+export function requestMedical(state,casualty,details={}){
+  const care=state.life?.medical,patient=typeof casualty==='string'?patientById(state,casualty):casualty;
+  if(!care||!patient||!(patient===state.player||byId(state,patient.id)===patient))return false;
+  const id=patientId(state,patient);
+  if(care.active?.patientId===id)return true;
+  let req=care.queue.find(call=>call.patientId===id);
+  if(!req){
+    if(patient.hp>65&&!details.knockdown&&!details.force&&!patient.injury?.down)return false;
+    req={id:'medical-'+(++state.life.serial),patientId:id,stage:'unreported',cause:causes.includes(details.cause)?details.cause:'injury',callerId:null,reportedAt:null,at:state.elapsed,checkAt:state.elapsed+.75};
+    holdPatient(state,patient);care.queue.push(req);
+  }
+  if(!req.callerId)markCall(state,req,findCaller(state,patient,details));
+  refreshMedicalStatus(state);
+  return Boolean(req.callerId);
+}
+export function medicalStatus(state,who=state.player){
+  const care=state.life?.medical,id=patientId(state,who);
+  if(!care)return null;
+  const call=care.active?.patientId===id?care.active:care.queue.find(c=>c.patientId===id);
+  if(!call?.callerId)return null;
+  const responder=medicalResponder(state,call.responderId)?.name||'The ambulance crew';
+  const messages={waiting:'Your call is logged. Waiting for an ambulance.',pickup:responder+' is getting the ambulance.',enroute:'An ambulance is on the way.',attend:responder+' is coming to you.',treatment:'The crew is treating your injuries.',board:'The crew is helping you into the ambulance.',transport:'Ambulance en route to the clinic.',admit:'The crew is bringing you into the clinic.',intake:'Clinic staff are treating you.'};
+  return {stage:call.stage,message:messages[call.stage]||messages.waiting,patientId:id,callerId:call.callerId};
+}
+function refreshMedicalStatus(state){
+  const care=state.life.medical,status=medicalStatus(state);
+  care.playerStatus=status?.stage||null;care.message=status?.message||'';
+}
+function medicalStage(state,req,stage){req.stage=stage;req.stageAt=state.elapsed;refreshMedicalStatus(state);}
+function admitPatient(state,call,patient,responder,unit){
+  const site=clinic(state);
+  const intake=openGround(state.world,{x:361,y:356},10,site.id,state.npcs.filter(n=>n!==patient));
+  Object.assign(patient,intake,{interior:site.id,hp:Math.max(68,patient.hp),pose:null,medicalHeld:false,moving:false,inServiceVehicle:null,passengerOf:null});
+  if(patient===state.player){
+    patient.stamina=Math.max(65,patient.stamina||0);patient.vehicleId=null;patient.equipped=false;
+    patient.hurtCooldown=2;patient.injury=null;
+    const fee=Math.min(30,patient.cash);patient.cash-=fee;
+    const text='The clinic treated your injuries. Your bill was $'+fee+'.';
+    state.recoveryNotice={title:'Back on your feet',text,time:state.elapsed};
+    state.journal.unshift({day:state.day,time:state.time,text});state.journal.length=Math.min(100,state.journal.length);
+  }else{
+    release(patient);patient.injury=null;patient.scheduleAt=state.elapsed+38;patient.task='recovering at the clinic';
+    memory(patient,call.id,'An ambulance crew brought me to the clinic after I got hurt.',state);
+  }
+  if(responder){release(responder);responder.scheduleAt=state.elapsed+4;}
+  if(unit){unit.siren=false;unit.speed=0;unit.route=[];unit.leg=0;}
+  state.life.medical.active=null;state.dirty=true;refreshMedicalStatus(state);
+}
+function reserveMedic(state){
+  const care=state.life.medical;
+  if(!care.relief){
+    const station=clinic(state), data=identityFor(4);
+    care.relief={id:'relief-medic',name:'Harper Ames',role:'paramedic',hp:100,interior:station.id,x:320,y:365,angle:0,moving:false,path:[],pose:null,
+      identity:{occupation:'Relief paramedic',languages:['English','Spanish']},appearance:{...data.appearance,hairStyle:'buzz',height:1.06,skin:'#976648'},task:'on call at the clinic'};
+  }
+  return care.relief;
+}
+function medicalResponder(state,id){return id==='relief-medic'?reserveMedic(state):byId(state,id);}
+function serviceRepairs(state,dt){
+  for(const car of state.life.traffic){
+    if(!car.service||car.health>0)continue;
+    car.speed=0;car.siren=false;
+    if(!car.repairAt)car.repairAt=state.elapsed+24;
+    if(state.elapsed<car.repairAt)continue;
+    const station=byType(state,car.service==='ambulance'?'clinic':'police');
+    const replacement=shoulder(state.world,station.door);
+    Object.assign(car,replacement,{health:100,repairAt:0,route:[],leg:0,speed:0});
+  }
+}
+function updateMedical(state,dt){
+  const care=state.life.medical;
+  for(const req of care.queue){
+    const patient=patientById(state,req.patientId);
+    if(!patient||req.callerId||state.elapsed<req.checkAt)continue;
+    req.checkAt=state.elapsed+.85;
+    markCall(state,req,findCaller(state,patient));
+  }
+  const unit=state.life.traffic.find(v=>v.service==='ambulance');
+  if(!care.active){
+    const candidate=care.queue.find(req=>req.callerId);
+    if(!candidate)return;
+    const patient=patientById(state,candidate.patientId);
+    if(!patient){care.queue=care.queue.filter(req=>req!==candidate);return;}
+    if(patient.interior===clinic(state).id){
+      care.queue.splice(care.queue.indexOf(candidate),1);care.active=candidate;medicalStage(state,candidate,'intake');return;
+    }
+    if(state.life.incident?.unitId===unit.id||unit.health<=0)return;
+    let responder=state.npcs.find(n=>['npc-4','npc-16'].includes(n.id)&&n!==patient&&freeForLife(state,n));
+    if(!responder&&state.elapsed-candidate.at>=16){
+      responder=reserveMedic(state);
+      if(responder.medicalHeld||responder.hp<=0)return;
+    }
+    if(!responder)return;
+    endStreetConversation(state,responder);
+    care.active=candidate;care.queue.splice(care.queue.indexOf(candidate),1);
+    candidate.responderId=responder.id;
+    candidate.pickup=curb(state.world,responder.interior?placeById(state,responder.interior).door:responder);
+    reserve(responder,'working an ambulance call');
+    setRoute(unit,responseRoute(state,unit,candidate.pickup));unit.siren=true;
+    medicalStage(state,candidate,'pickup');
+    return;
+  }
+  const call=care.active,patient=patientById(state,call.patientId),r=medicalResponder(state,call.responderId),site=clinic(state);
+  if(call.stage==='intake'){
+    if(state.elapsed-call.stageAt>=3)admitPatient(state,call,patient,null,null);
+    return;
+  }
+  if(unit.health<=0||!r||r.hp<=0||r.medicalHeld){
+    for(const n of [r,patient])if(n?.inServiceVehicle)stepOut(state,n,unit);
+    if(r&&!r.medicalHeld)release(r);
+    unit.siren=false;unit.speed=0;
+    call.responderId=null;call.stage='waiting';care.active=null;care.queue.unshift(call);refreshMedicalStatus(state);
+    return;
+  }
+  if(call.stage==='pickup'){
+    const there=vehicleAdvance(unit,dt,unit.cruise,false);
+    const ready=walk(state,r,there?unit:call.pickup,null,dt,110);
+    if(ready&&there){
+      seated(r,unit);const alertPlace=patient.interior?placeById(state,patient.interior).door:patient;
+      setRoute(unit,responseRoute(state,unit,alertPlace));medicalStage(state,call,'enroute');
+    }
+  }else if(call.stage==='enroute'){
+    const there=vehicleAdvance(unit,dt,unit.cruise,false);seated(r,unit);
+    if(there){stepOut(state,r,unit);r.task='reaching an injured resident';medicalStage(state,call,'attend');}
+  }else if(call.stage==='attend'){
+    const p=openGround(patient.interior?state.world:pedestrianWorld(state),{x:patient.x+13,y:patient.y+7},10,patient.interior);
+    if(walk(state,r,p,patient.interior,dt,110)&&sameRoom(r,patient)&&distance(r,patient)<42){
+      r.pose='treat';sayLine(state,r,'I’m here. Stay with me.','ambient');medicalStage(state,call,'treatment');
+    }
+  }else if(call.stage==='treatment'){
+    if(state.elapsed-call.stageAt>=4){
+      r.pose=null;patient.hp=Math.max(22,patient.hp);patient.pose='assisted';medicalStage(state,call,'board');
+    }
+  }else if(call.stage==='board'){
+    const ready=walk(state,r,unit,null,dt,82);
+    const boardingSpot=openGround(pedestrianWorld(state),{x:unit.x+7,y:unit.y+7});
+    const boarded=walk(state,patient,boardingSpot,null,dt,67);
+    if(ready&&boarded){
+      seated(r,unit);seated(patient,unit);setRoute(unit,responseRoute(state,unit,site.door));unit.siren=true;
+      medicalStage(state,call,'transport');
+    }
+  }else if(call.stage==='transport'){
+    const there=vehicleAdvance(unit,dt,unit.cruise*.9,false);seated(r,unit);seated(patient,unit);
+    if(there){stepOut(state,r,unit);stepOut(state,patient,unit);unit.siren=false;medicalStage(state,call,'admit');}
+  }else if(call.stage==='admit'){
+    const ready=walk(state,r,{x:277,y:356},site.id,dt,78);
+    const admitted=walk(state,patient,{x:361,y:356},site.id,dt,67);
+    if(ready&&admitted)admitPatient(state,call,patient,r,unit);
+  }
+}
+function restoreMedical(state,raw){
+  const care=state.life.medical;
+  if(!raw||typeof raw!=='object')return;
+  const ids=new Set();
+  const reader=entry=>{
+    if(!entry||typeof entry.id!=='string'||typeof entry.patientId!=='string')return null;
+    const patient=patientById(state,entry.patientId);if(!patient||ids.has(entry.patientId))return null;
+    const caller=entry.callerId==='player'||entry.callerId==='clinic'||byId(state,entry.callerId)?entry.callerId:null;
+    if(entry.stage!=='unreported'&&(!caller||!medicalStages.includes(entry.stage)))return null;
+    ids.add(entry.patientId);
+    return {id:entry.id.slice(0,90),patientId:entry.patientId,callerId:caller,stage:entry.stage,cause:causes.includes(entry.cause)?entry.cause:'injury',
+      at:finite(entry.at,0,state.elapsed+.1)?entry.at:state.elapsed,calledAt:finite(entry.calledAt,0,state.elapsed+.1)?entry.calledAt:null,
+      stageAt:finite(entry.stageAt,0,state.elapsed+.1)?entry.stageAt:state.elapsed,checkAt:state.elapsed+.25};
+  };
+  const active=reader(raw.active);
+  if(active){
+    if(active.stage==='intake')care.active=active;
+    else if(['pickup','enroute','attend','treatment','board','transport','admit'].includes(active.stage)&&
+       (['npc-4','npc-16','relief-medic'].includes(raw.active.responderId))&&raw.active.responderId!==active.patientId&&
+       raw.active.pickup&&finite(raw.active.pickup.x,0,state.world.width)&&finite(raw.active.pickup.y,0,state.world.height)&&state.life.incident?.unitId!=='unit-ambulance'){
+      care.active=active;active.responderId=raw.active.responderId;active.pickup={x:raw.active.pickup.x,y:raw.active.pickup.y};
+      const responder=medicalResponder(state,active.responderId),unit=state.life.traffic.find(v=>v.service==='ambulance');
+      if(active.responderId==='relief-medic'&&raw.relief){
+        const room=placeById(state,raw.relief.interior)?.id||null;
+        if(isWalkable(state.world,raw.relief.x,raw.relief.y,8,room)&&Number.isFinite(raw.relief.x)&&Number.isFinite(raw.relief.y))Object.assign(responder,{x:raw.relief.x,y:raw.relief.y,interior:room});
+      }
+      reserve(responder,'working an ambulance call');
+      if(active.stage==='treatment')responder.pose='treat';
+      if(active.stage==='transport'||active.stage==='enroute')seated(responder,unit);
+    }else{active.stage=active.callerId?'waiting':'unreported';care.queue.push(active);}
+  }
+  if(Array.isArray(raw.queue))for(const entry of raw.queue.slice(0,state.npcs.length+1)){
+    const item=reader(entry);
+    if(item){item.stage=item.callerId?'waiting':'unreported';care.queue.push(item);}
+  }
+  for(const call of [...care.queue,...(care.active?[care.active]:[])]){
+    const patient=patientById(state,call.patientId);
+    patient.medicalHeld=true;patient.moving=false;patient.pose=['board','admit'].includes(call.stage)?'assisted':'fallen';
+    if(patient!==state.player){patient.ambientBusy=true;patient.task='receiving medical assistance';}
+    if(call.stage==='transport'){const unit=state.life.traffic.find(v=>v.service==='ambulance');seated(patient,unit);}
+  }
+  refreshMedicalStatus(state);
 }

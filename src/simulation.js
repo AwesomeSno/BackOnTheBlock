@@ -1,5 +1,7 @@
-import {initializeLife, updateLife, restoreLife, residentRoutine} from './island-life.js';
+import {initializeLife, updateLife, restoreLife, residentRoutine,requestMedical} from './island-life.js';
 import {drive,hitsCar} from './driving.js';
+import {captureRoadMotion,resolveRoadImpacts,vehicleDamage} from './impacts.js';
+import {pedestrianPath,movePedestrian,vehicleExitPoint} from './pedestrian.js';
 import {outfits, noteOffense, pendingStatement, warnWitness, updatePolice, restoreStatements} from './police.js';
 import {migrateIslandSave} from './save-migration.js';
 import { generateWorld, hashSeed, random, distance, moveActor, findPath, canSee, buildingByType, isWalkable } from './world.js';
@@ -234,7 +236,7 @@ function moveTowards(state, actor, target, speed, dt) {
   const dx = (target.x - actor.x) / length;
   const dy = (target.y - actor.y) / length;
   actor.angle = Math.atan2(dy, dx);
-  moveActor(state.world, actor, dx * Math.min(length, speed * dt), dy * Math.min(length, speed * dt));
+  movePedestrian(state, actor, dx * Math.min(length, speed * dt), dy * Math.min(length, speed * dt));
   return distance(actor, target) < 12;
 }
 function travel(state, npc, targetInterior, targetPoint, dt) {
@@ -266,7 +268,7 @@ function navigate(state,npc,target,dt,speed=65) {
   if(distance(npc,target)<5){npc.moving=false;return true;}
   const stale=!npc.pathGoal||npc.pathGoal.interior!==npc.interior||distance(npc.pathGoal,target)>18;
   if(stale||(!npc.path?.length&&state.elapsed>=(npc.pathAt||0))){
-    npc.path=findPath(state.world,npc,target);
+    npc.path=pedestrianPath(state,npc,target);
     npc.pathGoal={x:target.x,y:target.y,interior:npc.interior};
     npc.pathAt=state.elapsed+(npc.path.length?0:.8);
   }
@@ -277,7 +279,7 @@ function navigate(state,npc,target,dt,speed=65) {
   npc.angle=Math.atan2(point.y-npc.y,point.x-npc.x);
   const step=Math.min(speed*dt,d);
   const prev={x:npc.x,y:npc.y};
-  moveActor(state.world,npc,Math.cos(npc.angle)*step,Math.sin(npc.angle)*step);
+  movePedestrian(state,npc,Math.cos(npc.angle)*step,Math.sin(npc.angle)*step);
   npc.moving=distance(npc,prev)>.1;
   if(distance(npc,point)<2)npc.path.shift();
   if(!npc.moving){npc.path=[];npc.pathAt=state.elapsed+.25;}
@@ -296,8 +298,8 @@ function separateResidents(state,dt) {
       const d=Math.hypot(dx,dy);if(d>=15)continue;
       const shove=Math.min(34*dt,(15-d)*(j<0?1:.5));
       const ux=d?dx/d:Math.cos(i),uy=d?dy/d:Math.sin(i);
-      moveActor(state.world,a,ux*shove,uy*shove);
-      if(j>=0)moveActor(state.world,b,-ux*shove,-uy*shove);
+      movePedestrian(state,a,ux*shove,uy*shove);
+      if(j>=0)movePedestrian(state,b,-ux*shove,-uy*shove);
     }
   }
 }
@@ -315,18 +317,12 @@ function updateNPCs(state, dt) {
       npc.mealDay = state.day;
     }
     if(npc.ambientBusy)continue;
-    if (npc.hp <= 0) {
-      npc.moving = false;
-      npc.task = 'recovering at the clinic';
-      if (state.elapsed >= npc.recoveryAt) {
-        npc.hp = 55;
-        npc.interior = building(state, 'clinic').id;
-        Object.assign(npc, byId(state, npc.interior).room.entry);
-        npc.scheduleAt = state.elapsed + 25;
-        npc.path = [];
-      }
+    if(npc.medicalHeld||npc.hp<=0||npc.knockdownUntil>state.elapsed){
+      npc.moving=false;
+      if(!npc.medicalHeld){npc.pose='fallen';npc.task='waiting for medical help';requestMedical(state,npc,{cause:npc.injury?.cause||'injury'});}
       continue;
     }
+    if(npc.pose==='fallen')npc.pose=null;
     if(npc.policeDuty)continue;
     if(npc.conversationUntil>state.elapsed && npc.panicUntil<=state.elapsed){npc.moving=false;continue;}
     if (npc.id === state.player.companionId && state.player.heat <= 0 && npc.trust >= 5) {
@@ -346,7 +342,7 @@ function updateNPCs(state, dt) {
         npc.interior = state.player.interior;
         npc.x = state.player.x;
         npc.y = state.player.y;
-        moveActor(state.world, npc, 18, 0);
+        movePedestrian(state, npc, 18, 0);
       }
       npc.task = 'walking with you';
       const goal = { x: state.player.x - 38, y: state.player.y + 24 };
@@ -357,7 +353,7 @@ function updateNPCs(state, dt) {
       npc.task = 'keeping a safe distance';
       if (sameRoom(npc, state.player) && distance(npc, state.player) < 170) {
         const d = Math.max(1, distance(npc, state.player));
-        moveActor(state.world, npc, (npc.x - state.player.x) / d * dt * 90, (npc.y - state.player.y) / d * dt * 90);
+        movePedestrian(state, npc, (npc.x - state.player.x) / d * dt * 90, (npc.y - state.player.y) / d * dt * 90);
       }
       continue;
     }
@@ -380,6 +376,13 @@ function updatePlayer(state, dt, input) {
   player.attackCooldown = Math.max(0, player.attackCooldown - dt);
   player.hurtCooldown = Math.max(0, player.hurtCooldown - dt);
   player.shotCooldown = Math.max(0, player.shotCooldown - dt);
+  if(player.medicalHeld||player.hp<=0||player.knockdownUntil>state.elapsed){
+    player.moving=false;
+    const car=state.vehicles.find(v=>v.id===player.vehicleId);
+    if(car){car.speed=0;car.braking=true;}
+    return;
+  }
+  if(player.pose==='fallen')player.pose=null;
   const x = clamp(finite(input.x), -1, 1);
   const y = clamp(finite(input.y), -1, 1);
   if (player.vehicleId) {
@@ -390,25 +393,17 @@ function updatePlayer(state, dt, input) {
       return;
     }
     const impact=drive(state,vehicle,x,-y,input.brake,dt);
-    if(impact)damagePlayer(state,impact*.022);
+    if(impact){damagePlayer(state,vehicleDamage(impact)*.48,{cause:'vehicle crash',speed:impact,angle:vehicle.angle});state.cameraImpact={at:state.elapsed,strength:Math.min(7,impact/40)};}
     vehicle.fuel = Math.max(0, vehicle.fuel - Math.abs(vehicle.speed) * dt * 0.0012);
     player.x = vehicle.x;
     player.y = vehicle.y;
     player.angle = vehicle.angle;
     player.moving = Math.abs(vehicle.speed) > 4;
-    if (Math.abs(vehicle.speed) > 90) {
-      for (const npc of state.npcs) {
-        if (npc.hp > 0 && !npc.interior && !npc.inServiceVehicle && npc.passengerOf !== vehicle.id && npc.id !== player.companionId && distance(vehicle, npc) < 29 && player.hurtCooldown <= 0) {
-          hurtNPC(state, npc, 45, 'reckless driving');
-          vehicle.speed *= 0.6;
-          player.hurtCooldown = 0.8;
-        }
-      }
-    }
   } else {
     const magnitude = Math.hypot(x, y);
     const running = input.run && player.stamina > 1 && magnitude > 0;
-    const speed = running ? 175 : 112;
+    const limping=player.injury&&player.hp<65;
+    const speed = (running&&!limping ? 175 : 112)*(limping?.65:1);
     if (magnitude) {
       const dx=x/Math.max(1,magnitude)*speed*dt,dy=y/Math.max(1,magnitude)*speed*dt;
       const cars=player.interior?[]:[...state.vehicles,...(state.life?.traffic||[]).filter(v=>v.active!==false)];
@@ -431,23 +426,35 @@ function updatePlayer(state, dt, input) {
     for (const npc of state.npcs) if (!npc.interior && distance(npc, player) < 140) npc.panicUntil = state.elapsed + 1.5;
   }
 }
-function damagePlayer(state, damage) {
-  if (state.player.hurtCooldown > 0) return;
+function markInjury(state,actor,damage,details={}) {
+  if(damage<=0)return;
+  const severe=actor.hp<=35||damage>=42;
+  actor.hitAt=state.elapsed;actor.hitAngle=details.angle??actor.angle;
+  actor.injury={severity:actor.hp<=0?'critical':severe?'serious':'minor',until:state.elapsed+(severe?18:5),downSince:severe?state.elapsed:null,cause:details.cause||'injury'};
+  if(details.speed>=78||actor.hp<=0){
+    actor.knockdownUntil=state.elapsed+(actor.hp<=0?120:2.2+Math.min(2,damage/30));
+    actor.pose='fallen';actor.moving=false;
+    if(!actor.vehicleId&&!actor.interior)movePedestrian(state,actor,Math.cos(actor.hitAngle)*Math.min(24,damage*.3),Math.sin(actor.hitAngle)*Math.min(24,damage*.3));
+  }
+  if(severe||details.speed>=100)requestMedical(state,actor,{cause:actor.injury.cause});
+}
+function damagePlayer(state, damage, details={}) {
+  if (state.player.hurtCooldown > 0||state.player.medicalHeld) return;
   state.player.hp = Math.max(0, state.player.hp - damage);
   state.player.hurtCooldown = 0.45;
+  markInjury(state,state.player,damage,details);
   state.effects.push({ kind: 'burst', x: state.player.x, y: state.player.y, interior: state.player.interior, life: 0.2, color: '#b37669' });
 }
-function hurtNPC(state, npc, damage, offense = 'assault') {
-  if (npc.hp <= 0) return;
-  crime(state, offense, damage >= 40 ? 4 : 2, npc.id);
+function hurtNPC(state, npc, damage, offense = 'assault',details={}) {
+  if (npc.hp <= 0||npc.medicalHeld) return;
+  if(offense)crime(state, offense, damage >= 40 ? 4 : 2, npc.id);
   npc.hp = Math.max(0, npc.hp - damage);
   npc.panicUntil = state.elapsed + 18;
-  if (npc.hp <= 0) {
-    npc.recoveryAt = state.elapsed + 50;
-    npc.task = 'waiting for medical help';
-    if (state.player.companionId === npc.id) state.player.companionId = null;
-    pushMessage(state, `${npc.name} is unconscious. Medical help is on its way.`, 'danger');
-    log(state, `${npc.name} was injured. They will recover at the clinic and remember what happened.`);
+  markInjury(state,npc,damage,{...details,cause:details.cause||offense||'road accident'});
+  if(npc.hp<=35){
+    if(state.player.companionId===npc.id){state.player.companionId=null;state.hangout=null;}
+    pushMessage(state,`${npc.name} is badly hurt. Call an ambulance or give first aid.`, 'danger');
+    log(state,`${npc.name} was injured and needs medical care.`);
   }
 }
 function attack(state) {
@@ -460,6 +467,7 @@ function attack(state) {
     return;
   }
   player.attackCooldown = armed ? 0.32 : 0.7;
+  player.action={kind:armed?'fire':'punch',at:state.elapsed,duration:armed?.22:.42};
   if (armed) { player.inventory.ammo--; player.magazine--; }
   const range = armed ? 430 : 49;
   const direction = { x: Math.cos(player.angle), y: Math.sin(player.angle) };
@@ -489,27 +497,16 @@ function exitVehicle(state) {
   const vehicle = state.vehicles.find(item => item.id === state.player.vehicleId);
   if (!vehicle) { state.player.vehicleId = null; return true; }
   if (Math.abs(vehicle.speed) > 45) { pushMessage(state, 'Slow down before getting out.', 'warn'); return false; }
-  const origin = { x: vehicle.x, y: vehicle.y, interior: null, radius: 10 };
-  for (const angle of [vehicle.angle + Math.PI / 2, vehicle.angle - Math.PI / 2, vehicle.angle + Math.PI, vehicle.angle]) {
-    const candidate = { ...origin };
-    moveActor(state.world, candidate, Math.cos(angle) * 45, Math.sin(angle) * 45);
-    if (distance(origin, candidate) > 20) {
-      state.player.x = candidate.x;
-      state.player.y = candidate.y;
-      state.player.vehicleId = null;
-      vehicle.speed = 0;
-      vehicle.parked = true;
-      const passenger = state.npcs.find(npc => npc.passengerOf === vehicle.id);
-      if (passenger) {
-        passenger.passengerOf = null;
-        passenger.interior = null;
-        passenger.x = candidate.x;
-        passenger.y = candidate.y;
-        passenger.path = [];
-        moveActor(state.world, passenger, 18, 0);
-      }
-      return true;
+  const candidate=vehicleExitPoint(state,vehicle);
+  if(candidate){
+    Object.assign(state.player,candidate,{vehicleId:null});
+    vehicle.speed=0;vehicle.parked=true;
+    const passenger=state.npcs.find(n=>n.passengerOf===vehicle.id);
+    if(passenger){
+      const other=vehicleExitPoint(state,vehicle,[candidate]);
+      if(other)Object.assign(passenger,other,{passengerOf:null,interior:null,path:[]});
     }
+    return true;
   }
   pushMessage(state, 'Park farther from the wall so there is room to get out.', 'warn');
   return false;
@@ -647,6 +644,7 @@ export function tick(state, delta, input = {}) {
   state.elapsed += dt;
   state.time += dt * MINUTES_PER_SECOND;
   if (state.time >= 1440) { state.time %= 1440; state.day++; state.dirty = true; }
+  const before=captureRoadMotion(state);
   state.player.lastX = state.player.x;
   state.player.lastY = state.player.y;
   updatePlayer(state, dt, input);
@@ -654,13 +652,26 @@ export function tick(state, delta, input = {}) {
   updatePolice(state,dt,{navigate,travel,arrest,pushMessage});
   updateNPCs(state, dt);
   separateResidents(state,dt);
+  resolveRoadImpacts(state,before,dt,(actor,damage,hit)=>{
+    if(actor===state.player)damagePlayer(state,damage,{...hit,cause:'road accident'});
+    else hurtNPC(state,actor,damage,hit.playerCaused?'reckless driving':null,{...hit,cause:'road accident'});
+  });
+  for(const actor of [state.player,...state.npcs]){
+    const prior=before.get(actor.id||'player');
+    const distanceMoved=prior&&prior.interior===(actor.interior||null)?distance(actor,prior):0;
+    const seated=actor.vehicleId||actor.passengerOf||actor.inServiceVehicle;
+    const moved=!seated&&distanceMoved<40?distanceMoved:0;
+    actor.motion={distance:(actor.motion?.distance||0)+moved,pace:moved/dt};
+    if(actor.injury&&actor.hp>65&&actor.injury.until<state.elapsed&&!actor.medicalHeld)actor.injury=null;
+    if(actor.hp<=0&&!actor.medicalHeld)requestMedical(state,actor,{cause:actor.injury?.cause||'injury'});
+  }
   updateJob(state, dt);
   updateEvents(state, dt);
   state.effects = state.effects.filter(effect => (effect.life -= dt) > 0).slice(-100);
   if (state.events.length > 40) state.events = state.events.filter(event => ['open', 'accepted'].includes(event.stage) || state.elapsed - event.expires < 180);
   if (state.cases.length > 50) state.cases = [...state.cases.filter(report => !report.resolved), ...state.cases.filter(report => report.resolved).slice(-10)].slice(-50);
   state.messages = state.messages.filter(message => state.elapsed - message.time < 9);
-  if (state.player.hp <= 0) recover(state);
+
   if (state.player.companionId) {
     const friend = npcById(state, state.player.companionId);
     if (!friend || friend.trust < 5 || friend.hp <= 0) {
@@ -681,7 +692,7 @@ export function nearby(state) {
     add('vehicle', player.vehicleId, 'Leave vehicle', player, 1);
     return targets;
   }
-  for (const npc of state.npcs) if (npc.hp > 0 && !npc.inServiceVehicle && !npc.passengerOf && sameRoom(player, npc) && canSee(state.world,player,npc)) add('npc', npc.id, npc.name, npc, 84);
+  for (const npc of state.npcs) if (!npc.inServiceVehicle && !npc.passengerOf && sameRoom(player, npc) && canSee(state.world,player,npc)) add('npc', npc.id, npc.name, npc, 84);
   for (const event of state.events) if (['open', 'accepted'].includes(event.stage) && !(event.collected && ['dropped_wallet', 'lost_bag'].includes(event.type)) && sameRoom(event, player)) {
     const names = { dropped_wallet: 'A dropped wallet', injury: 'Someone needs help', friend_favor: 'A favour for a friend', restock: 'A stock shortage', wage_dispute: 'An unpaid wage', lost_bag: 'An unattended bag' };
     add('event', event.id, names[event.type], event, 100);
@@ -740,6 +751,7 @@ export function interaction(state, requested) {
 
 function npcInteraction(state, npc) {
   if (!npc) return { title: 'A neighbour', body: 'They have moved on.', options: [] };
+  if(npc.hp<=35||npc.pose==='fallen'||npc.medicalHeld)return {title:npc.name,greeting:'',body:npc.medicalHeld?'Medical help is responding. Keep the area clear.':'They are hurt and need help.',options:[option('call_ambulance','Call an ambulance','Send the location to the clinic'),option('first_aid','Give first aid','Use one kit to stabilise them',state.player.inventory.medkit<1||npc.medicalHeld),option('close','Give them space')]};
   const memories = npc.memories.slice(0, 2).map(item => item.text).join(' ');
   const greeting = npc.role === 'friend' && !npc.memories.some(item => item.key === 'welcome') ? '“You made it. Your room is ready. The car still starts, mostly. I heard dispatch is hiring.”' : npc.trust < -25 ? '“I remember what happened. Keep this brief.”' : npc.trust >= 30 ? '“Good to see you. How are things holding up?”' : '“Hello. You looking for somebody?”';
   const known = npc.disclosures.length ? '\n\n' + npc.backstory : '';
@@ -862,6 +874,14 @@ function resolveEvent(state, event, text, trust = 0, honor = 0, recordMemory = t
 export function act(state, actionId, targetId = null) {
   const player = state.player;
   if (actionId === 'close') return { close: true };
+  if(actionId==='call_ambulance'){
+    const patient=targetId?npcById(state,targetId):player;
+    if(!patient||(patient!==player&&(!sameRoom(patient,player)||distance(patient,player)>100)))return {close:true};
+    const requested=requestMedical(state,patient,{selfCall:true,cause:patient.injury?.cause||'injury'});
+    pushMessage(state,requested?'The clinic has your location. Keep the access clear.':'Medical dispatch already has the call, or no treatment is needed.','info');
+    return {close:true};
+  }
+  if(player.medicalHeld||player.hp<=0||player.knockdownUntil>state.elapsed){pushMessage(state,'You need medical help before you can do that.','warn');return {close:true};}
   if (actionId === 'use_medkit' || actionId === 'use_snack') {
     const item = actionId === 'use_medkit' ? 'medkit' : 'snack';
     if (player.inventory[item] < 1 || (player.hp >= player.maxHp && (item !== 'snack' || player.stamina >= 100))) {
@@ -871,6 +891,7 @@ export function act(state, actionId, targetId = null) {
     player.inventory[item]--;
     player.hp = Math.min(player.maxHp, player.hp + (item === 'medkit' ? 45 : 12));
     if (item === 'snack') player.stamina = 100;
+    if(item==='medkit'&&player.hp>35){player.injury=null;player.knockdownUntil=0;player.pose=null;}
     log(state, item === 'medkit' ? 'Used a first aid kit.' : 'Ate a snack and caught your breath.');
     pushMessage(state, item === 'medkit' ? 'First aid • +45 health' : 'Snack • +12 health and restored stamina', 'good');
     return { close: false };
@@ -886,7 +907,7 @@ export function act(state, actionId, targetId = null) {
     if (!player.inventory.pistol || player.inventory.ammo <= 0) pushMessage(state, 'You need a pistol and spare rounds to reload.', 'muted');
     else if (player.reloadingUntil > state.elapsed) pushMessage(state, 'Already reloading.', 'muted');
     else if (player.magazine >= Math.min(6, player.inventory.ammo)) pushMessage(state, 'The magazine is full.', 'muted');
-    else { player.reloadingUntil = state.elapsed + 1.1; pushMessage(state, 'Reloading • one second', 'info'); }
+    else { player.action={kind:'reload',at:state.elapsed,duration:1.1};player.reloadingUntil = state.elapsed + 1.1; pushMessage(state, 'Reloading • one second', 'info'); }
     return { close: false };
   }
   if (actionId === 'dismiss_companion') {
@@ -913,6 +934,14 @@ export function act(state, actionId, targetId = null) {
   const npc = npcById(state, targetId);
   const event = state.events.find(item => item.id === targetId);
   switch (actionId) {
+    case 'first_aid':
+      if(npc&&player.inventory.medkit>0&&!npc.medicalHeld){
+        player.inventory.medkit--;npc.hp=Math.min(100,npc.hp+35);npc.knockdownUntil=0;npc.pose=null;
+        npc.injury={severity:'minor',until:state.elapsed+18,cause:'recovering',downSince:null};
+        remember(state,npc,'first-aid-'+Math.floor(state.elapsed),'You stopped and gave me first aid.',8);
+        requestMedical(state,npc,{selfCall:true,cause:'follow-up care'});pushMessage(state,`${npc.name} is stabilised. The clinic can finish treating them.`,'good');
+      }
+      break;
     case 'enter':
       if (!place || !isOpen(state, place) || player.vehicleId) return { close: true };
       player.interior = place.id;
@@ -1065,6 +1094,7 @@ export function act(state, actionId, targetId = null) {
     case 'treatment':
       if (player.cash >= 20) { player.cash -= 20; player.hp = 100; log(state, 'Paid $20 for full clinic treatment.'); }
       else { player.hp = Math.max(player.hp, 50); log(state, 'Received free basic triage.'); }
+      player.injury=null;player.knockdownUntil=0;player.pose=null;
       pushMessage(state, 'The nurse asks you to keep the bandage dry.', 'good');
       break;
     case 'repair_car': {
@@ -1072,7 +1102,7 @@ export function act(state, actionId, targetId = null) {
       if (car && player.cash >= 25) {
         const parking = openPosition(state.world, { x: place.door.x + 62, y: place.door.y + 35 }, 23);
         player.cash -= 25;
-        Object.assign(car, parking, { health: 100, fuel: 100, speed: 0, parked: true });
+        Object.assign(car, parking, { health: 100, fuel: 100, speed: 0, parked: true, damage: {front:0,rear:0,left:0,right:0}, lastCollision:null });
         log(state, 'Paid $25. Samir recovered, repaired and refuelled your car.');
         pushMessage(state, 'Your car is ready outside.', 'good');
       }
